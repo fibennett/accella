@@ -107,6 +107,20 @@ const MyTrainingPlans = ({ navigation }) => {
     },
   ];
 
+  const loadTrainingPlans = useCallback(async () => {
+  try {
+    // Dispatch action to load user's training plans
+    // dispatch(fetchUserTrainingPlans(user.id));
+    Alert.alert(
+      'Feature in Development',
+      'Training plans will be loaded from your coach assignments. This feature is coming soon!',
+      [{ text: 'OK', style: 'default' }]
+    );
+  } catch (error) {
+    console.error('Error loading training plans:', error);
+  }
+}, [dispatch, user]);
+
   useEffect(() => {
     // Entrance animation
     Animated.parallel([
@@ -124,21 +138,7 @@ const MyTrainingPlans = ({ navigation }) => {
 
     // Load training plans
     loadTrainingPlans();
-  }, []);
-
-  const loadTrainingPlans = useCallback(async () => {
-    try {
-      // Dispatch action to load user's training plans
-      // dispatch(fetchUserTrainingPlans(user.id));
-      Alert.alert(
-        'Feature in Development',
-        'Training plans will be loaded from your coach assignments. This feature is coming soon!',
-        [{ text: 'OK', style: 'default' }]
-      );
-    } catch (error) {
-      console.error('Error loading training plans:', error);
-    }
-  }, [dispatch, user]);
+  }, [loadTrainingPlans]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

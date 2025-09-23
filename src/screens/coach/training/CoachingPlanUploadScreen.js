@@ -1,3 +1,4 @@
+//src/screens/coach/training/CoachingPlanUploadScreen.js
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -8,10 +9,13 @@ import {
   RefreshControl
 } from 'react-native';
 import { Card, Button, ProgressBar, Surface, IconButton } from 'react-native-paper';
-import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
-import LinearGradient from 'react-native-linear-gradient';
 import DocumentProcessor from '../../../services/DocumentProcessor';
-import { COLORS, SPACING, TEXT_STYLES } from '../../../styles/constants/themes';
+import PlatformUtils from '../../../utils/PlatformUtils';
+import { COLORS, SPACING, TEXT_STYLES } from '../../../styles/themes';
+
+// Load platform-safe components
+const MaterialIcons = PlatformUtils.getSafeComponent('MaterialIcons');
+const LinearGradient = PlatformUtils.getSafeComponent('LinearGradient');
 
 // Move helper functions outside the component
 const getFileIcon = (type) => {
@@ -40,10 +44,23 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [documents, setDocuments] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [platformReady, setPlatformReady] = useState(false);
 
   useEffect(() => {
-    loadDocuments();
+    initializePlatform();
   }, []);
+
+  const initializePlatform = async () => {
+    try {
+      await PlatformUtils.initializePlatform();
+      setPlatformReady(true);
+      loadDocuments();
+    } catch (error) {
+      console.error('Platform initialization failed:', error);
+      setPlatformReady(true); // Continue anyway with fallbacks
+      loadDocuments();
+    }
+  };
 
   const loadDocuments = async () => {
     try {
@@ -51,28 +68,30 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
       setDocuments(docs);
     } catch (error) {
       console.error('Error loading documents:', error);
+      const platformError = PlatformUtils.handlePlatformError(error, 'Document Loading');
+      Alert.alert('Error', platformError.message);
     }
   };
 
-  const handleUploadSuccess = (documentId) => {
-    Alert.alert(
-      'Upload Successful',
-      'Your training plan has been uploaded successfully. Would you like to process it now?',
-      [
-        {
-          text: 'Process Later',
-          onPress: () => navigation.navigate('TrainingPlanLibrary')
-        },
-        {
-          text: 'Process Now',
-          onPress: () => navigation.navigate('PlanProcessing', { 
-            documentId,
-            onComplete: () => navigation.navigate('TrainingPlanLibrary')
-          })
-        }
-      ]
-    );
-  };
+const handleUploadSuccess = (documentId) => {
+  Alert.alert(
+    'Upload Successful',
+    'Your training plan has been uploaded successfully. Would you like to process it now?',
+    [
+      {
+        text: 'Process Later',
+        onPress: () => navigation.navigate('TrainingPlanLibrary')
+      },
+      {
+        text: 'Process Now',
+        onPress: () => navigation.navigate('PlanProcessing', { 
+          documentId,
+          onComplete: () => navigation.navigate('TrainingPlanLibrary')
+        })
+      }
+    ]
+  );
+};
 
   const handleDocumentUpload = async () => {
     try {
@@ -93,7 +112,8 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
       handleUploadSuccess(metadata.id);
       
     } catch (error) {
-      Alert.alert('Upload Error', error.message);
+      const platformError = PlatformUtils.handlePlatformError(error, 'Document Upload');
+      Alert.alert('Upload Error', platformError.message);
     } finally {
       setUploading(false);
       setUploadProgress(0);
@@ -105,6 +125,49 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
     await loadDocuments();
     setRefreshing(false);
   };
+
+  // Safe Icon component that works on both platforms
+  const SafeIcon = ({ name, size = 24, color = COLORS.primary, style }) => {
+    if (MaterialIcons) {
+      return <MaterialIcons name={name} size={size} color={color} style={style} />;
+    }
+    // Fallback for when MaterialIcons isn't available
+    const iconMap = {
+      'cloud-upload': '☁️',
+      'picture-as-pdf': '📄',
+      'description': '📝',
+      'grid-on': '📊',
+      'table-chart': '📈',
+      'insert-drive-file': '📄',
+      'arrow-right': '→'
+    };
+    return (
+      <Text style={[{ fontSize: size, color }, style]}>
+        {iconMap[name] || '📄'}
+      </Text>
+    );
+  };
+
+  // Safe Gradient component that works on both platforms
+  const SafeGradient = ({ colors = ['#667eea', '#764ba2'], style, children }) => {
+    if (LinearGradient) {
+      return <LinearGradient colors={colors} style={style}>{children}</LinearGradient>;
+    }
+    // Fallback for when LinearGradient isn't available
+    return (
+      <View style={[{ backgroundColor: colors[0] }, style]}>
+        {children}
+      </View>
+    );
+  };
+
+  if (!platformReady) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <Text>Initializing platform...</Text>
+      </View>
+    );
+  }
 
   return (
     <ScrollView 
@@ -118,7 +181,7 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
       }
     >
       {/* Header */}
-      <LinearGradient
+      <SafeGradient
         colors={['#667eea', '#764ba2']}
         style={styles.header}
       >
@@ -126,14 +189,17 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
         <Text style={styles.headerSubtext}>
           Upload PDF, Word, Excel, or CSV files containing your training plans
         </Text>
-      </LinearGradient>
+      </SafeGradient>
 
       {/* Upload Section */}
       <Surface style={styles.uploadSection}>
-        <MaterialIcons name="cloud-upload" size={48} color={COLORS.primary} />
+        <SafeIcon name="cloud-upload" size={48} color={COLORS.primary} />
         <Text style={styles.uploadTitle}>Select Your Coaching Plan</Text>
         <Text style={styles.uploadSubtitle}>
-          Supported formats: PDF, Word, Excel, CSV (Max 10MB)
+          {PlatformUtils.isWeb() 
+            ? 'Supported formats: Word, Excel, CSV, TXT (Max 5MB)'
+            : 'Supported formats: PDF, Word, Excel, CSV (Max 10MB)'
+          }
         </Text>
         
         <Button
@@ -143,7 +209,10 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
           style={styles.uploadButton}
           icon="upload"
         >
-          {uploading ? 'Uploading...' : 'Choose File'}
+          {uploading 
+            ? PlatformUtils.getLoadingMessage('fileSelection')
+            : 'Choose File'
+          }
         </Button>
 
         {uploading && (
@@ -160,6 +229,15 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
         )}
       </Surface>
 
+      {/* Platform Info */}
+      {PlatformUtils.isWeb() && (
+        <Surface style={[styles.uploadSection, { marginTop: 0, paddingTop: SPACING.md }]}>
+          <Text style={styles.platformNotice}>
+            🌐 Web Platform: Some features may be limited. For full functionality, use the mobile app.
+          </Text>
+        </Surface>
+      )}
+
       {/* Documents List */}
       {documents.length > 0 && (
         <View style={styles.documentsSection}>
@@ -168,7 +246,7 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
             <Card key={doc.id} style={styles.documentCard}>
               <Card.Content>
                 <View style={styles.documentInfo}>
-                  <MaterialIcons 
+                  <SafeIcon 
                     name={getFileIcon(doc.type)} 
                     size={24} 
                     color={COLORS.primary} 
@@ -181,6 +259,11 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
                     <Text style={styles.documentStatus}>
                       {doc.processed ? '✅ Processed' : '⏳ Pending Processing'}
                     </Text>
+                    {doc.platform && (
+                      <Text style={styles.platformTag}>
+                        {doc.platform === 'web' ? '🌐 Web' : '📱 Mobile'}
+                      </Text>
+                    )}
                   </View>
                   <IconButton
                     icon="arrow-right"
@@ -196,7 +279,7 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
 
       {documents.length === 0 && !uploading && (
         <View style={styles.emptyState}>
-          <MaterialIcons name="description" size={64} color={COLORS.secondary} />
+          <SafeIcon name="description" size={64} color={COLORS.secondary} />
           <Text style={styles.emptyText}>No coaching plans uploaded yet</Text>
           <Text style={styles.emptySubtext}>
             Upload your first training plan to get started
@@ -230,6 +313,7 @@ const styles = StyleSheet.create({
     padding: SPACING.lg,
     alignItems: 'center',
     elevation: 2,
+    ...PlatformUtils.getPlatformStyles(),
   },
   uploadTitle: {
     ...TEXT_STYLES.h3,
@@ -258,6 +342,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: SPACING.xs,
   },
+  platformNotice: {
+    ...TEXT_STYLES.caption,
+    textAlign: 'center',
+    color: COLORS.secondary,
+    fontStyle: 'italic',
+  },
   documentsSection: {
     padding: SPACING.md,
   },
@@ -267,6 +357,7 @@ const styles = StyleSheet.create({
   },
   documentCard: {
     marginBottom: SPACING.md,
+    ...PlatformUtils.getPlatformStyles(),
   },
   documentInfo: {
     flexDirection: 'row',
@@ -287,6 +378,12 @@ const styles = StyleSheet.create({
   documentStatus: {
     ...TEXT_STYLES.caption,
     marginTop: SPACING.xs,
+  },
+  platformTag: {
+    ...TEXT_STYLES.caption,
+    fontSize: 10,
+    color: COLORS.secondary,
+    marginTop: SPACING.xs / 2,
   },
   emptyState: {
     padding: SPACING.xl,

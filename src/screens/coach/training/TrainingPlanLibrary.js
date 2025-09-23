@@ -37,8 +37,7 @@ import { SPACING } from '../../../styles/spacing';
 import { TEXT_STYLES } from '../../../styles/textStyles';
 import { TYPOGRAPHY } from '../../../styles/typography';
 import { LAYOUT } from '../../../styles/layout';
-import { DocumentProcessor } from '../../../services/DocumentProcessor';
-//import PlaceholderScreen from '../../../components/PlaceholderScreen';
+import DocumentProcessor from '../../../services/DocumentProcessor';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -57,10 +56,7 @@ const TrainingPlanLibrary = ({ navigation }) => {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState(null);
-  const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'list'
-
-
-  // Replace the useState with real data loading
+  const [viewMode, setViewMode] = useState('grid');
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -79,6 +75,62 @@ const TrainingPlanLibrary = ({ navigation }) => {
     advanced: COLORS.error,
   };
 
+  // MOVED: Define loadTrainingPlans function before it's used
+  const loadTrainingPlans = useCallback(async () => {
+    try {
+      setLoading(true);
+      const realPlans = await DocumentProcessor.getTrainingPlans();
+      setPlans(realPlans);
+    } catch (error) {
+      console.error('Error loading training plans:', error);
+      Alert.alert('Error', 'Failed to load training plans');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Refresh handler
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadTrainingPlans();
+    } catch (error) {
+      Alert.alert('Error', 'Failed to refresh training plans');
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadTrainingPlans]);
+
+  // Handle plan selection
+  const handlePlanPress = useCallback((plan) => {
+    setSelectedPlan(plan);
+    if (plan.isOwned) {
+      navigation.navigate('TrainingPlanDetails', { planId: plan.id });
+    } else {
+      Alert.alert(
+        'Training Plan',
+        `Would you like to preview or purchase "${plan.title}"?`,
+        [
+          { text: 'Preview', onPress: () => handlePreviewPlan(plan) },
+          { text: 'Purchase', onPress: () => handlePurchasePlan(plan) },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
+    }
+  }, [navigation]);
+
+  const handlePreviewPlan = useCallback((plan) => {
+    Alert.alert('Feature Coming Soon', 'Plan preview functionality will be available in the next update! 🏃‍♂️');
+  }, []);
+
+  const handlePurchasePlan = useCallback((plan) => {
+    Alert.alert('Feature Coming Soon', 'Marketplace payment system will be available in the next update! 💳');
+  }, []);
+
+  const handleCreatePlan = useCallback(() => {
+    navigation.navigate('CreateTrainingPlan');
+  }, [navigation]);
+
   // Animation setup
   useEffect(() => {
     Animated.parallel([
@@ -93,86 +145,32 @@ const TrainingPlanLibrary = ({ navigation }) => {
         useNativeDriver: true,
       }),
     ]).start();
-  }, []);
+  }, [fadeAnim, slideAnim]);
 
-  // Add this useEffect to load real data
+  // Load training plans on component mount
   useEffect(() => {
     loadTrainingPlans();
-  }, []);
+  }, [loadTrainingPlans]);
 
-  // Refresh handler
-    const onRefresh = useCallback(async () => {
-      setRefreshing(true);
-      try {
-        await loadTrainingPlans();
-      } catch (error) {
-        Alert.alert('Error', 'Failed to refresh training plans');
-      } finally {
-        setRefreshing(false);
-      }
-    }, []);
+  // Filter plans based on search and category - moved to useMemo
+  const filteredPlans = React.useMemo(() => {
+    return plans.filter(plan => {
+      const matchesSearch = plan.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           plan.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
+      const matchesCategory = selectedCategory === 'all' || plan.category === selectedCategory;
+      return matchesSearch && matchesCategory;
+    });
+  }, [plans, searchQuery, selectedCategory]);
 
-    // Add loading state to the render
-    if (loading) {
-      return (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={{ marginTop: SPACING.md }}>Loading training plans...</Text>
-        </View>
-      );
-    }
-
-  // Filter plans based on search and category
-  const filteredPlans = plans.filter(plan => {
-    const matchesSearch = plan.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         plan.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
-    const matchesCategory = selectedCategory === 'all' || plan.category === selectedCategory;
-    return matchesSearch && matchesCategory;
-  });
-
-  // Handle plan selection
-  const handlePlanPress = useCallback((plan) => {
-    setSelectedPlan(plan);
-    if (plan.isOwned) {
-      navigation.navigate('TrainingPlanDetails', { planId: plan.id });
-    } else {
-      // Show purchase/preview modal
-      Alert.alert(
-        'Training Plan',
-        `Would you like to preview or purchase "${plan.title}"?`,
-        [
-          { text: 'Preview', onPress: () => handlePreviewPlan(plan) },
-          { text: 'Purchase', onPress: () => handlePurchasePlan(plan) },
-          { text: 'Cancel', style: 'cancel' },
-        ]
-      );
-    }
-  }, [navigation]);
-
-  const loadTrainingPlans = async () => {
-  try {
-    setLoading(true);
-    const realPlans = await DocumentProcessor.getTrainingPlans();
-    setPlans(realPlans);
-  } catch (error) {
-    console.error('Error loading training plans:', error);
-    Alert.alert('Error', 'Failed to load training plans');
-  } finally {
-    setLoading(false);
+  // Show loading state - MOVED AFTER ALL HOOKS
+  if (loading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={{ marginTop: SPACING.md }}>Loading training plans...</Text>
+      </View>
+    );
   }
-};
-
-  const handlePreviewPlan = (plan) => {
-    Alert.alert('Feature Coming Soon', 'Plan preview functionality will be available in the next update! 🏃‍♂️');
-  };
-
-  const handlePurchasePlan = (plan) => {
-    Alert.alert('Feature Coming Soon', 'Marketplace payment system will be available in the next update! 💳');
-  };
-
-  const handleCreatePlan = () => {
-    navigation.navigate('CreateTrainingPlan');
-  };
 
   const renderPlanCard = ({ item: plan, index }) => {
     return (

@@ -8,6 +8,8 @@ import { COLORS } from '../styles/colors';
 // Existing Coach Screens
 import CoachDashboard from '../screens/coach/CoachDashboard';
 import CreateTrainingPlan from '../screens/coach/CreateTrainingPlan';
+import CoachingPlanUploadScreen from '../screens/coach/training/CoachingPlanUploadScreen';
+import PlanProcessingScreen from '../screens/coach/training/PlanProcessingScreen';
 import SessionBuilder from '../screens/coach/SessionBuilder';
 import PlayerList from '../screens/coach/PlayerList';
 import PlayerProgress from '../screens/coach/PlayerProgress';
@@ -637,12 +639,22 @@ const DashboardStack = () => (
       component={QuickActions}
       options={{ title: 'Quick Actions' }} 
     />
+    <Stack.Screen 
+      name="PlanProcessing" 
+      component={PlanProcessingScreen} 
+      options={{ title: 'Processing Plan' }} 
+    />
 
     {/* Training Management */}
     <Stack.Screen 
       name="CreateTrainingPlan" 
       component={CreateTrainingPlan} 
       options={{ title: 'Create Training Plan' }} 
+    />
+    <Stack.Screen 
+      name="CoachingPlanUploadScreen" 
+      component={CoachingPlanUploadScreen} 
+      options={{ title: 'Upload Coaching Plan' }} 
     />
     <Stack.Screen 
       name="SessionBuilder" 
@@ -755,6 +767,11 @@ const TrainingStack = () => (
       name="CreateTrainingPlan" 
       component={CreateTrainingPlan} 
       options={{ title: 'Create Training Plan' }} 
+    />
+    <Stack.Screen 
+      name="CoachingPlanUploadScreen" 
+      component={CoachingPlanUploadScreen} 
+      options={{ title: 'Upload Coaching Plan' }} 
     />
     <Stack.Screen 
       name="TrainingPlanLibrary" 

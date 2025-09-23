@@ -44,7 +44,7 @@ const CoachDashboard = ({ navigation }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentTimeSlot, setCurrentTimeSlot] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
-  
+  const [formData, setFormData] = useState(null);
   const scrollY = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(50)).current;
@@ -450,6 +450,35 @@ const CoachDashboard = ({ navigation }) => {
     extrapolate: 'clamp',
   });
 
+  // Add this helper function to your CoachDashboard component:
+const getCoachInitials = () => {
+  const firstName = user?.firstName || '';
+  const lastName = user?.lastName || '';
+  
+  const firstInitial = firstName.charAt(0).toUpperCase();
+  const lastInitial = lastName.charAt(0).toUpperCase();
+  
+  // If we have both initials, use them
+  if (firstInitial && lastInitial) {
+    return firstInitial + lastInitial;
+  }
+  
+  // If we only have first name, use first two characters or duplicate
+  if (firstInitial && !lastInitial) {
+    const secondChar = firstName.charAt(1).toUpperCase();
+    return firstInitial + (secondChar || firstInitial);
+  }
+  
+  // If we only have last name, use it
+  if (!firstInitial && lastInitial) {
+    const secondChar = lastName.charAt(1).toUpperCase();
+    return lastInitial + (secondChar || lastInitial);
+  }
+  
+  // Fallback if no names available
+  return 'CR'; // Coach Rodriguez or Coach as default
+};
+
   const renderQuickActions = () => {
     const currentActions = quickActionsData.find(cat => 
       cat.category.toLowerCase().includes(activeTab) || activeTab === 'overview'
@@ -628,18 +657,26 @@ const CoachDashboard = ({ navigation }) => {
 
           <View style={styles.headerContent}>
             <TouchableOpacity 
-              onPress={() => navigation.navigate('Profile')}
-              style={styles.profileImageContainer}
-            >
-              <Avatar.Image 
-                size={60} 
-                source={{ uri: user?.profileImage || formData?.profileImage || user?.avatar || 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100' }}
-                style={styles.userAvatar}
-              />
-              <View style={styles.cameraIcon}>
-                <Icon name="camera-alt" size={14} color="white" />
-              </View>
-            </TouchableOpacity>
+                onPress={() => navigation.navigate('Profile')}
+                style={styles.profileImageContainer}
+              >
+                {user?.profileImage || user?.avatar ? (
+                  <Avatar.Image 
+                    size={60} 
+                    source={{ uri: user.profileImage || user.avatar }}
+                    style={styles.userAvatar}
+                  />
+                ) : (
+                  <Avatar.Text 
+                    size={60} 
+                    label={getCoachInitials()}
+                    style={styles.userAvatar}
+                  />
+                )}
+                <View style={styles.cameraIcon}>
+                  <Icon name="camera-alt" size={14} color="white" />
+                </View>
+              </TouchableOpacity>
             <View style={styles.greetingContainer}>
               <Text style={styles.greeting}>{getGreeting()}</Text>
               <Text style={styles.userName}>Coach {user?.firstName || 'Rodriguez'}! 🏆</Text>
@@ -889,7 +926,7 @@ const CoachDashboard = ({ navigation }) => {
               
               <TouchableOpacity 
                 style={styles.planActionCard}
-                onPress={() => navigation.navigate('TrainingPlanLibrary')}>
+                onPress={() => navigation.navigate('CoachingPlanUploadScreen')}>
                 <View style={[styles.planActionGradient, { backgroundColor: '#4ECDC4' }]}>
                   <Icon name="cloud-upload" size={40} color="white" />
                   <Text style={styles.planActionTitle}>Upload Plan</Text>
@@ -1886,6 +1923,28 @@ sectionHeaderRight: {
 scrollIndicator: {
   marginRight: SPACING.sm || 4,
   opacity: 0.7,
+},
+cameraIcon: {
+  position: 'absolute',
+  bottom: -2,
+  right: -2,
+  width: 24,
+  height: 24,
+  borderRadius: 12,
+  backgroundColor: '#667eea',
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderWidth: 2,
+  borderColor: 'white',
+  elevation: 4,
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.2,
+  shadowRadius: 4,
+},
+profileImageContainer: {
+  position: 'relative',
+  marginRight: SPACING.md || 16,
 },
 });
 

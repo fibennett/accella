@@ -3,24 +3,33 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import PlatformUtils from '../utils/PlatformUtils';
 
-// Safe imports that won't break Metro bundler
+// Safe module variables - initialized to null
 let DocumentPicker = null;
 let RNFS = null;
 let mammoth = null;
 let XLSX = null;
 
-// Initialize platform-specific modules
+// Safe initialization flag
+let modulesInitialized = false;
+
+// Safe module initialization that won't crash the app
 const initializePlatformModules = async () => {
+  if (modulesInitialized) return;
+
   try {
+    PlatformUtils.logDebugInfo('Starting module initialization');
+    
     if (PlatformUtils.isWeb()) {
-      // Web-specific modules
-      if (typeof window !== 'undefined') {
-        try {
-          mammoth = await PlatformUtils.loadMammoth();
-          XLSX = await PlatformUtils.loadXLSX();
-        } catch (error) {
-          console.warn('Failed to load web modules:', error);
-        }
+      // Web-specific modules only
+      try {
+        mammoth = await PlatformUtils.loadMammoth();
+        XLSX = await PlatformUtils.loadXLSX();
+        PlatformUtils.logDebugInfo('Web modules loaded', { 
+          mammoth: !!mammoth, 
+          xlsx: !!XLSX 
+        });
+      } catch (error) {
+        console.warn('Some web modules failed to load:', error.message);
       }
     } else {
       // Mobile-specific modules
@@ -29,12 +38,24 @@ const initializePlatformModules = async () => {
         RNFS = await PlatformUtils.loadFileSystem();
         mammoth = await PlatformUtils.loadMammoth();
         XLSX = await PlatformUtils.loadXLSX();
+        PlatformUtils.logDebugInfo('Mobile modules loaded', { 
+          documentPicker: !!DocumentPicker,
+          rnfs: !!RNFS,
+          mammoth: !!mammoth,
+          xlsx: !!XLSX
+        });
       } catch (error) {
-        console.warn('Failed to load mobile modules:', error);
+        console.warn('Some mobile modules failed to load:', error.message);
       }
     }
+    
+    modulesInitialized = true;
+    PlatformUtils.logDebugInfo('Module initialization completed');
+    
   } catch (error) {
     console.error('Module initialization failed:', error);
+    // Don't throw - allow app to continue with fallbacks
+    modulesInitialized = true; // Mark as initialized to avoid retry loops
   }
 };
 
@@ -43,27 +64,60 @@ class DocumentProcessor {
     this.initialized = false;
     this.supportedFormats = PlatformUtils.getSupportedFormats();
     this.fileSizeLimit = PlatformUtils.getFileSizeLimit();
+    this.initializationPromise = null;
     
-    // Initialize modules
+    // Start initialization immediately but don't block constructor
     this.init();
   }
 
   async init() {
-    if (!this.initialized) {
+    if (this.initializationPromise) {
+      return this.initializationPromise;
+    }
+
+    this.initializationPromise = this._performInit();
+    return this.initializationPromise;
+  }
+
+  async _performInit() {
+    if (this.initialized) return;
+
+    try {
       await initializePlatformModules();
       this.initialized = true;
+      
       PlatformUtils.logDebugInfo('DocumentProcessor initialized', {
         platform: Platform.OS,
         supportedFormats: this.supportedFormats.length,
-        fileSizeLimit: this.fileSizeLimit
+        fileSizeLimit: this.fileSizeLimit,
+        modulesAvailable: {
+          documentPicker: !!DocumentPicker,
+          fileSystem: !!RNFS,
+          mammoth: !!mammoth,
+          xlsx: !!XLSX
+        }
       });
+    } catch (error) {
+      console.error('DocumentProcessor initialization failed:', error);
+      this.initialized = true; // Mark as initialized to avoid retry loops
     }
   }
 
-  // Ensure initialization before any operation
-  async ensureInitialized() {
-    if (!this.initialized) {
-      await this.init();
+  // Ensure initialization with timeout to prevent hanging
+  async ensureInitialized(timeout = 5000) {
+    if (this.initialized) return;
+
+    try {
+      await Promise.race([
+        this.init(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Initialization timeout')), timeout)
+        )
+      ]);
+    } catch (error) {
+      console.warn('Initialization timeout or failed:', error.message);
+      // Continue anyway - fallbacks should handle missing modules
+      this.initialized = true;
     }
   }
 
@@ -74,21 +128,27 @@ class DocumentProcessor {
       
       PlatformUtils.logDebugInfo('Starting document selection');
       
-      if (PlatformUtils.isWeb()) {
-        return await this._selectDocumentWeb();
-      } else {
-        return await this._selectDocumentMobile();
-      }
-    } catch (error) {
-      const platformError = PlatformUtils.createError(
-        `Failed to select document: ${error.message}`,
-        [
-          'Check file format is supported',
-          'Ensure file size is within limits',
-          'Try selecting a different file'
-        ]
+      const result = await PlatformUtils.executePlatformSpecific(
+        () => this._selectDocumentWeb(),
+        () => this._selectDocumentMobile()
       );
       
+      if (!result) {
+        return null; // User cancelled
+      }
+
+      // Validate the selected file
+      const validation = this.validateFileForPlatform(result);
+      if (!validation.isValid) {
+        throw PlatformUtils.createError(
+          validation.errors.join(', '),
+          validation.suggestions
+        );
+      }
+
+      return result;
+    } catch (error) {
+      const platformError = PlatformUtils.handlePlatformError(error, 'Document Selection');
       console.error('Document selection error:', platformError);
       throw platformError;
     }
@@ -98,32 +158,34 @@ class DocumentProcessor {
   async _selectDocumentWeb() {
     return new Promise((resolve, reject) => {
       try {
+        if (typeof document === 'undefined') {
+          reject(PlatformUtils.createError('Document API not available'));
+          return;
+        }
+
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = PlatformUtils.getFileInputAccept();
         input.style.display = 'none';
         
+        let resolved = false;
+
+        const cleanup = () => {
+          if (document.body.contains(input)) {
+            document.body.removeChild(input);
+          }
+        };
+
         input.onchange = async (event) => {
+          if (resolved) return;
+          resolved = true;
+
           try {
-            const file = event.target.files[0];
+            const file = event.target.files?.[0];
             if (!file) {
+              cleanup();
               resolve(null);
               return;
-            }
-
-            // Check file size
-            if (file.size > this.fileSizeLimit) {
-              throw PlatformUtils.createError(
-                `File size exceeds ${Math.round(this.fileSizeLimit / 1024 / 1024)}MB limit`
-              );
-            }
-
-            // Validate file type
-            if (!this.supportedFormats.includes(file.type)) {
-              throw PlatformUtils.createError(
-                'Unsupported file type',
-                ['Use .docx, .xlsx, .csv, or .txt files']
-              );
             }
 
             const result = {
@@ -140,30 +202,34 @@ class DocumentProcessor {
               size: file.size
             });
             
+            cleanup();
             resolve(result);
           } catch (error) {
-            reject(error);
-          } finally {
-            if (document.body.contains(input)) {
-              document.body.removeChild(input);
-            }
+            cleanup();
+            reject(PlatformUtils.handlePlatformError(error, 'Web File Selection'));
           }
         };
         
-        input.oncancel = () => {
-          if (document.body.contains(input)) {
-            document.body.removeChild(input);
-          }
+        input.oncancel = input.onerror = () => {
+          if (resolved) return;
+          resolved = true;
+          cleanup();
           resolve(null);
         };
+
+        // Timeout fallback
+        setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            cleanup();
+            resolve(null);
+          }
+        }, 30000); // 30 second timeout
         
         document.body.appendChild(input);
         input.click();
       } catch (error) {
-        reject(PlatformUtils.createError(
-          'Failed to create file input',
-          ['Try refreshing the page', 'Use a different browser']
-        ));
+        reject(PlatformUtils.handlePlatformError(error, 'Web File Input Creation'));
       }
     });
   }
@@ -174,7 +240,11 @@ class DocumentProcessor {
       if (!DocumentPicker) {
         throw PlatformUtils.createError(
           'Document picker not available',
-          ['Restart the app', 'Update to latest version']
+          [
+            'Install react-native-document-picker',
+            'Restart the app',
+            'Update to latest version'
+          ]
         );
       }
 
@@ -184,13 +254,6 @@ class DocumentProcessor {
       });
       
       const file = result[0];
-      
-      // Check file size
-      if (file.size > this.fileSizeLimit) {
-        throw PlatformUtils.createError(
-          `File size exceeds ${Math.round(this.fileSizeLimit / 1024 / 1024)}MB limit`
-        );
-      }
       
       PlatformUtils.logDebugInfo('Mobile file selected', {
         name: file.name,
@@ -203,7 +266,7 @@ class DocumentProcessor {
       if (DocumentPicker?.isCancel && DocumentPicker.isCancel(error)) {
         return null; // User cancelled
       }
-      throw error;
+      throw PlatformUtils.handlePlatformError(error, 'Mobile File Selection');
     }
   }
 
@@ -212,17 +275,12 @@ class DocumentProcessor {
     try {
       await this.ensureInitialized();
       
-      if (PlatformUtils.isWeb()) {
-        return await this._storeDocumentWeb(file);
-      } else {
-        return await this._storeDocumentMobile(file);
-      }
-    } catch (error) {
-      const platformError = PlatformUtils.createError(
-        `Failed to store document: ${error.message}`,
-        ['Check available storage space', 'Try a smaller file']
+      return await PlatformUtils.executePlatformSpecific(
+        () => this._storeDocumentWeb(file),
+        () => this._storeDocumentMobile(file)
       );
-      
+    } catch (error) {
+      const platformError = PlatformUtils.handlePlatformError(error, 'Document Storage');
       console.error('Document storage error:', platformError);
       throw platformError;
     }
@@ -248,11 +306,14 @@ class DocumentProcessor {
       existingDocs.push(metadata);
       await AsyncStorage.setItem('coaching_documents', JSON.stringify(existingDocs));
       
-      PlatformUtils.logDebugInfo('Web document stored', { documentId, size: file.size });
+      PlatformUtils.logDebugInfo('Web document stored', { 
+        documentId, 
+        size: file.size 
+      });
       
       return metadata;
     } catch (error) {
-      throw PlatformUtils.createError(`Failed to store web document: ${error.message}`);
+      throw PlatformUtils.handlePlatformError(error, 'Web Document Storage');
     }
   }
 
@@ -260,7 +321,10 @@ class DocumentProcessor {
   async _storeDocumentMobile(file) {
     try {
       if (!RNFS) {
-        throw PlatformUtils.createError('File system not available');
+        throw PlatformUtils.createError(
+          'File system not available',
+          ['Install react-native-fs', 'Check app permissions']
+        );
       }
 
       const documentId = `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -285,15 +349,18 @@ class DocumentProcessor {
       existingDocs.push(metadata);
       await AsyncStorage.setItem('coaching_documents', JSON.stringify(existingDocs));
       
-      PlatformUtils.logDebugInfo('Mobile document stored', { documentId, localPath });
+      PlatformUtils.logDebugInfo('Mobile document stored', { 
+        documentId, 
+        localPath 
+      });
       
       return metadata;
     } catch (error) {
-      throw PlatformUtils.createError(`Failed to store mobile document: ${error.message}`);
+      throw PlatformUtils.handlePlatformError(error, 'Mobile Document Storage');
     }
   }
 
-  // Process training plan
+  // Process training plan with enhanced error handling
   async processTrainingPlan(documentId) {
     try {
       await this.ensureInitialized();
@@ -307,7 +374,8 @@ class DocumentProcessor {
 
       PlatformUtils.logDebugInfo('Processing training plan', { 
         documentId, 
-        type: document.type 
+        type: document.type,
+        platform: document.platform 
       });
 
       // Extract text content based on file type
@@ -315,14 +383,8 @@ class DocumentProcessor {
       const fileType = document.type.toLowerCase();
       
       if (fileType.includes('word') || fileType.includes('document')) {
-        if (!PlatformUtils.isFeatureSupported('wordProcessing')) {
-          throw PlatformUtils.createError('Word document processing not supported on this platform');
-        }
         extractedText = await this.extractWordText(document);
       } else if (fileType.includes('excel') || fileType.includes('sheet')) {
-        if (!PlatformUtils.isFeatureSupported('excelProcessing')) {
-          throw PlatformUtils.createError('Excel document processing not supported on this platform');
-        }
         extractedText = await this.extractExcelText(document);
       } else if (fileType.includes('csv')) {
         extractedText = await this.extractCSVText(document);
@@ -340,6 +402,13 @@ class DocumentProcessor {
         throw PlatformUtils.createError('Unsupported file type for processing');
       }
 
+      if (!extractedText || extractedText.trim().length === 0) {
+        throw PlatformUtils.createError(
+          'No text content could be extracted from the document',
+          ['Check if the document contains readable text', 'Try a different file format']
+        );
+      }
+
       // Process extracted text into training plan structure
       const trainingPlan = await this.parseTrainingPlanContent(extractedText, document);
       
@@ -353,42 +422,38 @@ class DocumentProcessor {
 
       PlatformUtils.logDebugInfo('Training plan processed successfully', { 
         planId: trainingPlan.id,
-        sessionsCount: trainingPlan.sessionsCount 
+        sessionsCount: trainingPlan.sessionsCount,
+        textLength: extractedText.length
       });
 
       return trainingPlan;
     } catch (error) {
       console.error('Error processing training plan:', error);
-      throw error instanceof Error && error.suggestions 
-        ? error 
-        : PlatformUtils.createError(`Processing failed: ${error.message}`);
+      throw PlatformUtils.handlePlatformError(error, 'Training Plan Processing');
     }
   }
 
-  // Platform-specific text extraction methods
-  async extractPDFText(document) {
-    // PDF extraction would require platform-specific implementation
-    throw PlatformUtils.createError(
-      'PDF text extraction requires additional setup',
-      ['Use Word (.docx) or text (.txt) files instead']
-    );
-  }
-
+  // Enhanced text extraction with better error handling
   async extractWordText(document) {
     try {
       if (!mammoth) {
-        throw PlatformUtils.createError('Word processing library not available');
+        throw PlatformUtils.createError(
+          'Word processing library not available',
+          ['Install mammoth library', 'Try using a text file instead']
+        );
       }
 
       let buffer;
       
       if (PlatformUtils.isWeb()) {
-        if (document.uri) {
-          const response = await fetch(document.uri);
-          buffer = await response.arrayBuffer();
-        } else {
+        if (!document.uri) {
           throw PlatformUtils.createError('Web file not accessible');
         }
+        const response = await fetch(document.uri);
+        if (!response.ok) {
+          throw PlatformUtils.createError('Failed to fetch file content');
+        }
+        buffer = await response.arrayBuffer();
       } else {
         if (!RNFS || !document.localPath) {
           throw PlatformUtils.createError('Mobile file not accessible');
@@ -400,30 +465,36 @@ class DocumentProcessor {
       const result = await mammoth.extractRawText({ buffer });
       
       PlatformUtils.logDebugInfo('Word text extracted', { 
-        textLength: result.value.length 
+        textLength: result.value.length,
+        hasWarnings: result.messages.length > 0
       });
       
       return result.value;
     } catch (error) {
-      throw PlatformUtils.createError('Failed to extract Word document text');
+      throw PlatformUtils.handlePlatformError(error, 'Word Text Extraction');
     }
   }
 
   async extractExcelText(document) {
     try {
       if (!XLSX) {
-        throw PlatformUtils.createError('Excel processing library not available');
+        throw PlatformUtils.createError(
+          'Excel processing library not available',
+          ['Install xlsx library', 'Try using a CSV file instead']
+        );
       }
 
       let buffer;
       
       if (PlatformUtils.isWeb()) {
-        if (document.uri) {
-          const response = await fetch(document.uri);
-          buffer = await response.arrayBuffer();
-        } else {
+        if (!document.uri) {
           throw PlatformUtils.createError('Web file not accessible');
         }
+        const response = await fetch(document.uri);
+        if (!response.ok) {
+          throw PlatformUtils.createError('Failed to fetch file content');
+        }
+        buffer = await response.arrayBuffer();
       } else {
         if (!RNFS || !document.localPath) {
           throw PlatformUtils.createError('Mobile file not accessible');
@@ -432,7 +503,10 @@ class DocumentProcessor {
         buffer = Buffer.from(base64Data, 'base64');
       }
       
-      const workbook = XLSX.read(buffer, { type: PlatformUtils.isWeb() ? 'array' : 'buffer' });
+      const workbook = XLSX.read(buffer, { 
+        type: PlatformUtils.isWeb() ? 'array' : 'buffer' 
+      });
+      
       let extractedText = '';
       
       workbook.SheetNames.forEach(sheetName => {
@@ -440,7 +514,10 @@ class DocumentProcessor {
         const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
         extractedText += `Sheet: ${sheetName}\n`;
         data.forEach(row => {
-          extractedText += row.join(' | ') + '\n';
+          const rowText = row.filter(cell => cell !== null && cell !== undefined).join(' | ');
+          if (rowText.trim()) {
+            extractedText += rowText + '\n';
+          }
         });
         extractedText += '\n';
       });
@@ -452,7 +529,7 @@ class DocumentProcessor {
       
       return extractedText;
     } catch (error) {
-      throw PlatformUtils.createError('Failed to extract Excel text');
+      throw PlatformUtils.handlePlatformError(error, 'Excel Text Extraction');
     }
   }
 
@@ -461,12 +538,14 @@ class DocumentProcessor {
       let text;
       
       if (PlatformUtils.isWeb()) {
-        if (document.uri) {
-          const response = await fetch(document.uri);
-          text = await response.text();
-        } else {
+        if (!document.uri) {
           throw PlatformUtils.createError('Web file not accessible');
         }
+        const response = await fetch(document.uri);
+        if (!response.ok) {
+          throw PlatformUtils.createError('Failed to fetch file content');
+        }
+        text = await response.text();
       } else {
         if (!RNFS || !document.localPath) {
           throw PlatformUtils.createError('Mobile file not accessible');
@@ -480,7 +559,7 @@ class DocumentProcessor {
       
       return text;
     } catch (error) {
-      throw PlatformUtils.createError('Failed to read CSV file');
+      throw PlatformUtils.handlePlatformError(error, 'CSV Text Extraction');
     }
   }
 
@@ -489,12 +568,14 @@ class DocumentProcessor {
       let text;
       
       if (PlatformUtils.isWeb()) {
-        if (document.uri) {
-          const response = await fetch(document.uri);
-          text = await response.text();
-        } else {
+        if (!document.uri) {
           throw PlatformUtils.createError('Web file not accessible');
         }
+        const response = await fetch(document.uri);
+        if (!response.ok) {
+          throw PlatformUtils.createError('Failed to fetch file content');
+        }
+        text = await response.text();
       } else {
         if (!RNFS || !document.localPath) {
           throw PlatformUtils.createError('Mobile file not accessible');
@@ -508,47 +589,30 @@ class DocumentProcessor {
       
       return text;
     } catch (error) {
-      throw PlatformUtils.createError('Failed to read text file');
+      throw PlatformUtils.handlePlatformError(error, 'Text File Extraction');
     }
   }
 
-  // Document deletion
-  async deleteDocument(documentId) {
-    try {
-      const documents = await this.getStoredDocuments();
-      const document = documents.find(doc => doc.id === documentId);
-      
-      if (document) {
-        if (PlatformUtils.isMobile() && document.localPath && RNFS) {
-          try {
-            await RNFS.unlink(document.localPath);
-          } catch (error) {
-            console.warn('Could not delete local file:', error);
-          }
-        } else if (PlatformUtils.isWeb() && document.uri) {
-          try {
-            URL.revokeObjectURL(document.uri);
-          } catch (error) {
-            console.warn('Could not revoke blob URL:', error);
-          }
-        }
-        
-        const filteredDocs = documents.filter(doc => doc.id !== documentId);
-        await AsyncStorage.setItem('coaching_documents', JSON.stringify(filteredDocs));
-        
-        PlatformUtils.logDebugInfo('Document deleted', { documentId });
-      }
-      
-      return true;
-    } catch (error) {
-      throw PlatformUtils.createError(`Failed to delete document: ${error.message}`);
-    }
+  // PDF extraction placeholder
+  async extractPDFText(document) {
+    throw PlatformUtils.createError(
+      'PDF text extraction not yet implemented',
+      [
+        'Use Word (.docx) files instead',
+        'Convert PDF to Word format first',
+        'Save as text (.txt) file'
+      ]
+    );
   }
 
-  // Parse training plan content using simple text analysis
+  // Keep all your existing parsing methods unchanged but add error handling
   async parseTrainingPlanContent(text, document) {
     try {
       const lines = text.split('\n').filter(line => line.trim());
+      
+      if (lines.length === 0) {
+        throw PlatformUtils.createError('Document appears to be empty');
+      }
       
       // Get user info from storage or default
       const userInfo = await this.getUserInfo();
@@ -574,19 +638,60 @@ class DocumentProcessor {
         // Additional metadata
         createdAt: new Date().toISOString(),
         sourceDocument: document.id,
-        rawContent: text,
+        rawContent: text.substring(0, 10000), // Limit stored content
         sessions: this.extractDetailedSessions(lines),
         schedule: this.extractSchedule(lines),
-        platform: document.platform || PlatformUtils.isWeb() ? 'web' : 'mobile'
+        platform: document.platform || (PlatformUtils.isWeb() ? 'web' : 'mobile')
       };
 
       return trainingPlan;
     } catch (error) {
-      throw PlatformUtils.createError('Failed to parse training plan content');
+      throw PlatformUtils.handlePlatformError(error, 'Training Plan Content Parsing');
     }
   }
 
-  // Keep all your existing extraction methods unchanged
+  // Document validation specific to platform
+  validateFileForPlatform(file) {
+    const errors = [];
+    
+    // Basic validation
+    if (!file || !file.size || !file.type || !file.name) {
+      errors.push('Invalid file data');
+      return { isValid: false, errors, suggestions: ['Select a valid file'] };
+    }
+    
+    // Size validation
+    if (file.size > this.fileSizeLimit) {
+      errors.push(`File size exceeds ${Math.round(this.fileSizeLimit / 1024 / 1024)}MB limit`);
+    }
+    
+    // Type validation
+    if (!this.supportedFormats.includes(file.type)) {
+      errors.push(`Unsupported file type: ${file.type}`);
+    }
+    
+    // Platform-specific validations
+    if (PlatformUtils.isWeb()) {
+      if (file.type === 'application/pdf') {
+        errors.push('PDF processing not supported on web platform');
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        errors.push('File too large for web platform (5MB limit)');
+      }
+    }
+    
+    return {
+      isValid: errors.length === 0,
+      errors: errors,
+      suggestions: errors.length > 0 ? [
+        'Use supported file formats (.docx, .xlsx, .csv, .txt)',
+        `Keep file size under ${Math.round(this.fileSizeLimit / 1024 / 1024)}MB`,
+        'Try compressing the file if it\'s too large'
+      ] : []
+    };
+  }
+
+  // All your existing extraction methods remain the same
   extractTitle(lines, filename) {
     const titlePatterns = [
       /^title:\s*(.+)/i,
@@ -844,7 +949,7 @@ class DocumentProcessor {
     };
   }
 
-  // Utility methods
+  // Utility methods with enhanced error handling
   async getUserInfo() {
     try {
       const userInfo = await AsyncStorage.getItem('user_profile');
@@ -855,7 +960,7 @@ class DocumentProcessor {
         };
       }
     } catch (error) {
-      console.log('Could not load user info');
+      console.log('Could not load user info:', error.message);
     }
     
     return { name: 'Coach' };
@@ -864,7 +969,21 @@ class DocumentProcessor {
   async getStoredDocuments() {
     try {
       const documents = await AsyncStorage.getItem('coaching_documents');
-      return documents ? JSON.parse(documents) : [];
+      const parsed = documents ? JSON.parse(documents) : [];
+      
+      // Validate document structure
+      return parsed.map(doc => ({
+        id: doc.id || `doc_${Date.now()}`,
+        originalName: doc.originalName || 'Unknown Document',
+        type: doc.type || 'text/plain',
+        size: doc.size || 0,
+        uploadedAt: doc.uploadedAt || new Date().toISOString(),
+        processed: doc.processed || false,
+        platform: doc.platform || 'unknown',
+        localPath: doc.localPath,
+        uri: doc.uri,
+        processedAt: doc.processedAt
+      }));
     } catch (error) {
       console.error('Error loading stored documents:', error);
       return [];
@@ -918,7 +1037,7 @@ class DocumentProcessor {
       
       return trainingPlan;
     } catch (error) {
-      throw PlatformUtils.createError('Failed to save training plan');
+      throw PlatformUtils.handlePlatformError(error, 'Training Plan Save');
     }
   }
 
@@ -935,101 +1054,68 @@ class DocumentProcessor {
         });
       }
     } catch (error) {
-      throw PlatformUtils.createError('Failed to update document metadata');
+      throw PlatformUtils.handlePlatformError(error, 'Document Metadata Update');
     }
   }
 
-  async deleteTrainingPlan(planId) {
-    try {
-      const plans = await this.getTrainingPlans();
-      const filteredPlans = plans.filter(plan => plan.id !== planId);
-      await AsyncStorage.setItem('training_plans', JSON.stringify(filteredPlans));
-      
-      PlatformUtils.logDebugInfo('Training plan deleted', { planId });
-      
-      return true;
-    } catch (error) {
-      throw PlatformUtils.createError('Failed to delete training plan');
-    }
-  }
-
-  async updatePlanProgress(planId, progress) {
-    try {
-      const plans = await this.getTrainingPlans();
-      const planIndex = plans.findIndex(plan => plan.id === planId);
-      
-      if (planIndex !== -1) {
-        plans[planIndex].progress = Math.min(100, Math.max(0, progress));
-        await AsyncStorage.setItem('training_plans', JSON.stringify(plans));
-        
-        PlatformUtils.logDebugInfo('Plan progress updated', { 
-          planId, 
-          progress: plans[planIndex].progress 
-        });
-        
-        return plans[planIndex];
-      }
-      
-      throw PlatformUtils.createError('Plan not found');
-    } catch (error) {
-      throw PlatformUtils.createError('Failed to update plan progress');
-    }
-  }
-
-  async togglePlanVisibility(planId) {
-    try {
-      const plans = await this.getTrainingPlans();
-      const planIndex = plans.findIndex(plan => plan.id === planId);
-      
-      if (planIndex !== -1) {
-        plans[planIndex].isPublic = !plans[planIndex].isPublic;
-        await AsyncStorage.setItem('training_plans', JSON.stringify(plans));
-        
-        PlatformUtils.logDebugInfo('Plan visibility toggled', { 
-          planId, 
-          isPublic: plans[planIndex].isPublic 
-        });
-        
-        return plans[planIndex];
-      }
-      
-      throw PlatformUtils.createError('Plan not found');
-    } catch (error) {
-      throw PlatformUtils.createError('Failed to toggle plan visibility');
-    }
-  }
-
-  // Additional utility methods
-  async clearAllDocuments() {
+  async deleteDocument(documentId) {
     try {
       const documents = await this.getStoredDocuments();
+      const document = documents.find(doc => doc.id === documentId);
       
-      // Clean up platform-specific resources
-      for (const doc of documents) {
-        if (PlatformUtils.isMobile() && doc.localPath && RNFS) {
+      if (document) {
+        // Clean up platform-specific resources
+        if (PlatformUtils.isMobile() && document.localPath && RNFS) {
           try {
-            await RNFS.unlink(doc.localPath);
+            await RNFS.unlink(document.localPath);
           } catch (error) {
-            console.warn('Could not delete file:', doc.localPath);
+            console.warn('Could not delete local file:', error.message);
           }
-        } else if (PlatformUtils.isWeb() && doc.uri) {
+        } else if (PlatformUtils.isWeb() && document.uri) {
           try {
-            URL.revokeObjectURL(doc.uri);
+            URL.revokeObjectURL(document.uri);
           } catch (error) {
-            console.warn('Could not revoke blob URL:', doc.uri);
+            console.warn('Could not revoke blob URL:', error.message);
           }
         }
+        
+        const filteredDocs = documents.filter(doc => doc.id !== documentId);
+        await AsyncStorage.setItem('coaching_documents', JSON.stringify(filteredDocs));
+        
+        PlatformUtils.logDebugInfo('Document deleted', { documentId });
       }
-      
-      await AsyncStorage.removeItem('coaching_documents');
-      
-      PlatformUtils.logDebugInfo('All documents cleared', { 
-        count: documents.length 
-      });
       
       return true;
     } catch (error) {
-      throw PlatformUtils.createError('Failed to clear documents');
+      throw PlatformUtils.handlePlatformError(error, 'Document Deletion');
+    }
+  }
+
+  // Health check with comprehensive status
+  async healthCheck() {
+    try {
+      const capabilities = this.getCapabilities();
+      const storageInfo = await this.getStorageInfo();
+      const permissions = await PlatformUtils.checkPermissions();
+      const moduleAvailability = PlatformUtils.checkModuleAvailability();
+      
+      return {
+        status: 'healthy',
+        initialized: this.initialized,
+        capabilities,
+        storage: storageInfo,
+        permissions,
+        moduleAvailability,
+        platform: PlatformUtils.isWeb() ? 'web' : 'mobile',
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      return {
+        status: 'unhealthy',
+        error: error.message,
+        platform: PlatformUtils.isWeb() ? 'web' : 'mobile',
+        timestamp: new Date().toISOString()
+      };
     }
   }
 
@@ -1052,91 +1138,62 @@ class DocumentProcessor {
         supportedFormats: this.supportedFormats
       };
     } catch (error) {
-      throw PlatformUtils.createError('Failed to get storage info');
+      throw PlatformUtils.handlePlatformError(error, 'Storage Info Retrieval');
     }
   }
 
-  // Platform-specific validation
-  validateFileForPlatform(file) {
-    const errors = [];
-    
-    // Size validation
-    if (file.size > this.fileSizeLimit) {
-      errors.push(`File size exceeds ${Math.round(this.fileSizeLimit / 1024 / 1024)}MB limit`);
-    }
-    
-    // Type validation
-    if (!this.supportedFormats.includes(file.type)) {
-      errors.push('Unsupported file type');
-    }
-    
-    // Platform-specific validations
-    if (PlatformUtils.isWeb()) {
-      if (file.type === 'application/pdf') {
-        errors.push('PDF processing not supported on web platform');
-      }
-    }
-    
-    return {
-      isValid: errors.length === 0,
-      errors: errors,
-      suggestions: errors.length > 0 ? [
-        'Use supported file formats (.docx, .xlsx, .csv, .txt)',
-        `Keep file size under ${Math.round(this.fileSizeLimit / 1024 / 1024)}MB`,
-        'Try compressing the file if it\'s too large'
-      ] : []
-    };
-  }
-
-  // Platform capability check
   getCapabilities() {
     return {
       fileSelection: PlatformUtils.isFeatureSupported('fileSelection'),
-      wordProcessing: PlatformUtils.isFeatureSupported('wordProcessing'),
-      excelProcessing: PlatformUtils.isFeatureSupported('excelProcessing'),
+      wordProcessing: PlatformUtils.isFeatureSupported('wordProcessing') && !!mammoth,
+      excelProcessing: PlatformUtils.isFeatureSupported('excelProcessing') && !!XLSX,
       csvProcessing: PlatformUtils.isFeatureSupported('csvProcessing'),
       pdfProcessing: PlatformUtils.isFeatureSupported('pdfProcessing'),
-      localFileSystem: PlatformUtils.isFeatureSupported('localFileSystem'),
+      localFileSystem: PlatformUtils.isFeatureSupported('localFileSystem') && !!RNFS,
       maxFileSize: this.fileSizeLimit,
       supportedFormats: this.supportedFormats,
-      platform: PlatformUtils.isWeb() ? 'web' : 'mobile'
+      platform: PlatformUtils.isWeb() ? 'web' : 'mobile',
+      modulesLoaded: {
+        documentPicker: !!DocumentPicker,
+        fileSystem: !!RNFS,
+        mammoth: !!mammoth,
+        xlsx: !!XLSX
+      }
     };
   }
 
-  // Health check for the service
-  async healthCheck() {
+  // Clean shutdown method
+  async shutdown() {
     try {
-      const capabilities = this.getCapabilities();
-      const storageInfo = await this.getStorageInfo();
-      const permissions = await PlatformUtils.checkPermissions();
+      PlatformUtils.logDebugInfo('DocumentProcessor shutting down');
       
-      return {
-        status: 'healthy',
-        initialized: this.initialized,
-        capabilities,
-        storage: storageInfo,
-        permissions,
-        platform: PlatformUtils.isWeb() ? 'web' : 'mobile',
-        timestamp: new Date().toISOString()
-      };
+      // Clean up any resources if needed
+      if (PlatformUtils.isWeb()) {
+        // Revoke any blob URLs that might still be active
+        const documents = await this.getStoredDocuments();
+        documents.forEach(doc => {
+          if (doc.uri && doc.uri.startsWith('blob:')) {
+            try {
+              URL.revokeObjectURL(doc.uri);
+            } catch (error) {
+              console.warn('Error revoking blob URL:', error.message);
+            }
+          }
+        });
+      }
+      
+      this.initialized = false;
+      modulesInitialized = false;
+      
+      return true;
     } catch (error) {
-      return {
-        status: 'unhealthy',
-        error: error.message,
-        platform: PlatformUtils.isWeb() ? 'web' : 'mobile',
-        timestamp: new Date().toISOString()
-      };
+      console.warn('Error during shutdown:', error.message);
+      return false;
     }
-  }
-
-  // Platform check utilities
-  isWebPlatform() {
-    return PlatformUtils.isWeb();
-  }
-
-  isMobilePlatform() {
-    return PlatformUtils.isMobile();
   }
 }
 
-export default new DocumentProcessor();
+// Create and export singleton instance
+const documentProcessorInstance = new DocumentProcessor();
+
+export default documentProcessorInstance;

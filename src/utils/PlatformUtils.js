@@ -1,5 +1,6 @@
 // src/utils/PlatformUtils.js
 import { Platform } from 'react-native';
+import React from 'react';
 
 class PlatformUtils {
   static isWeb() {
@@ -18,6 +19,75 @@ class PlatformUtils {
     return Platform.OS === 'android';
   }
 
+  // Safe component loaders to prevent requireNativeComponent errors
+  static loadMaterialIcons() {
+    if (this.isWeb()) {
+      // Return a web-compatible icon component
+      return ({ name, size = 24, color = '#000', style, ...props }) => {
+        // Use Unicode symbols or CSS icons for web
+        const iconMap = {
+          'cloud-upload': '☁️',
+          'picture-as-pdf': '📄',
+          'description': '📝',
+          'grid-on': '📊',
+          'table-chart': '📈',
+          'insert-drive-file': '📄',
+          'arrow-right': '→',
+          'upload': '⬆️'
+        };
+        
+        return React.createElement('span', {
+          style: {
+            fontSize: size,
+            color: color,
+            fontFamily: 'monospace',
+            ...style
+          },
+          ...props
+        }, iconMap[name] || '📄');
+      };
+    } else {
+      try {
+        return require('react-native-vector-icons/MaterialIcons').default;
+      } catch (error) {
+        console.warn('MaterialIcons not available, using fallback');
+        return ({ name, size = 24, color = '#000' }) => 
+          React.createElement('text', { 
+            style: { fontSize: size, color } 
+          }, '📄');
+      }
+    }
+  }
+
+  static loadLinearGradient() {
+    if (this.isWeb()) {
+      // Return a web-compatible gradient component
+      return ({ colors = ['#000', '#fff'], style, children, ...props }) => {
+        const gradient = colors.length === 2 
+          ? `linear-gradient(135deg, ${colors[0]}, ${colors[1]})`
+          : `linear-gradient(135deg, ${colors.join(', ')})`;
+        
+        return React.createElement('div', {
+          style: {
+            background: gradient,
+            ...style
+          },
+          ...props
+        }, children);
+      };
+    } else {
+      try {
+        return require('react-native-linear-gradient').default;
+      } catch (error) {
+        console.warn('LinearGradient not available, using fallback');
+        return ({ colors, style, children }) => 
+          React.createElement('view', { 
+            style: { backgroundColor: colors?.[0] || '#000', ...style } 
+          }, children);
+      }
+    }
+  }
+
   // Safe import wrapper that handles missing modules
   static async safeImport(moduleName, fallback = null) {
     try {
@@ -26,7 +96,6 @@ class PlatformUtils {
         return fallback;
       }
       
-      // Use static imports mapped by module name to avoid Metro bundler issues
       const moduleMap = {
         'react-native-document-picker': async () => {
           if (this.isMobile()) {
@@ -85,10 +154,10 @@ class PlatformUtils {
     }
   }
 
-  // Alternative approach: Direct module loaders for specific modules
+  // Specific module loaders with better error handling
   static async loadDocumentPicker() {
     if (this.isWeb()) {
-      return null; // Not available on web
+      return null; // Not available on web, use HTML input instead
     }
     
     try {
@@ -102,7 +171,7 @@ class PlatformUtils {
 
   static async loadFileSystem() {
     if (this.isWeb()) {
-      return null; // Not available on web
+      return null; // Not available on web, use browser APIs instead
     }
     
     try {
@@ -142,7 +211,9 @@ class PlatformUtils {
       'react-native-pdf-lib',
       'react-native-image-picker',
       'react-native-permissions',
-      'react-native-keychain'
+      'react-native-keychain',
+      'react-native-vector-icons',
+      'react-native-linear-gradient'
     ];
     
     return webIncompatibleModules.includes(moduleName);
@@ -188,7 +259,6 @@ class PlatformUtils {
     if (this.isWeb()) {
       return 'web-storage'; // Virtual path for web
     }
-    // This would need RNFS for mobile platforms
     return 'documents'; // Mobile document directory
   }
 
@@ -202,7 +272,9 @@ class PlatformUtils {
       pdfProcessing: false, // Requires additional web library
       localFileSystem: false,
       nativeFilePicker: false,
-      backgroundProcessing: false
+      backgroundProcessing: false,
+      vectorIcons: false, // Use fallback icons
+      gradients: true // CSS gradients available
     };
 
     const mobileSupported = {
@@ -210,10 +282,12 @@ class PlatformUtils {
       wordProcessing: true,
       excelProcessing: true,
       csvProcessing: true,
-      pdfProcessing: true, // With appropriate library
+      pdfProcessing: true,
       localFileSystem: true,
       nativeFilePicker: true,
-      backgroundProcessing: true
+      backgroundProcessing: true,
+      vectorIcons: true,
+      gradients: true
     };
 
     if (this.isWeb()) {
@@ -247,13 +321,10 @@ class PlatformUtils {
   // Handle platform-specific permissions
   static async checkPermissions() {
     if (this.isWeb()) {
-      // Web doesn't need explicit file permissions
       return { granted: true, message: 'Web file access available' };
     }
     
-    // Mobile would check storage permissions here
     try {
-      // This would use react-native-permissions on mobile
       return { granted: true, message: 'Storage permissions granted' };
     } catch (error) {
       return { granted: false, message: 'Storage permissions required' };
@@ -316,35 +387,187 @@ class PlatformUtils {
     }
   }
 
-  // Module availability check
+  // Enhanced module availability check
   static checkModuleAvailability() {
     const availability = {
       platform: Platform.OS,
-      modules: {}
+      modules: {},
+      components: {}
+    };
+
+    // Check native modules
+    const moduleCheckers = {
+      'react-native-document-picker': () => {
+        if (this.isWeb()) {
+          return { available: false, reason: 'web-incompatible', alternative: 'HTML file input' };
+        }
+        try {
+          require('react-native-document-picker');
+          return { available: true, reason: 'loaded' };
+        } catch (error) {
+          return { available: false, reason: error.message };
+        }
+      },
+      'react-native-fs': () => {
+        if (this.isWeb()) {
+          return { available: false, reason: 'web-incompatible', alternative: 'Browser APIs' };
+        }
+        try {
+          require('react-native-fs');
+          return { available: true, reason: 'loaded' };
+        } catch (error) {
+          return { available: false, reason: error.message };
+        }
+      },
+      'mammoth': () => {
+        try {
+          require('mammoth');
+          return { available: true, reason: 'loaded' };
+        } catch (error) {
+          return { available: false, reason: error.message };
+        }
+      },
+      'xlsx': () => {
+        try {
+          require('xlsx');
+          return { available: true, reason: 'loaded' };
+        } catch (error) {
+          return { available: false, reason: error.message };
+        }
+      }
+    };
+
+    // Check UI components
+    const componentCheckers = {
+      'react-native-vector-icons': () => {
+        if (this.isWeb()) {
+          return { available: false, reason: 'web-incompatible', alternative: 'Unicode/CSS icons' };
+        }
+        try {
+          require('react-native-vector-icons/MaterialIcons');
+          return { available: true, reason: 'loaded' };
+        } catch (error) {
+          return { available: false, reason: error.message, alternative: 'Text fallback' };
+        }
+      },
+      'react-native-linear-gradient': () => {
+        if (this.isWeb()) {
+          return { available: false, reason: 'web-incompatible', alternative: 'CSS gradients' };
+        }
+        try {
+          require('react-native-linear-gradient');
+          return { available: true, reason: 'loaded' };
+        } catch (error) {
+          return { available: false, reason: error.message, alternative: 'Solid colors' };
+        }
+      }
     };
 
     // Check each module
-    const modulesToCheck = [
-      'react-native-document-picker',
-      'react-native-fs', 
-      'mammoth',
-      'xlsx'
-    ];
+    Object.keys(moduleCheckers).forEach(moduleName => {
+      availability.modules[moduleName] = moduleCheckers[moduleName]();
+    });
 
-    modulesToCheck.forEach(moduleName => {
-      try {
-        if (this.isWeb() && this.isWebIncompatible(moduleName)) {
-          availability.modules[moduleName] = { available: false, reason: 'web-incompatible' };
-        } else {
-          require(moduleName);
-          availability.modules[moduleName] = { available: true, reason: 'loaded' };
-        }
-      } catch (error) {
-        availability.modules[moduleName] = { available: false, reason: error.message };
-      }
+    // Check each component
+    Object.keys(componentCheckers).forEach(componentName => {
+      availability.components[componentName] = componentCheckers[componentName]();
     });
 
     return availability;
+  }
+
+  // Safe component loader with fallbacks
+  static getSafeComponent(componentName, fallbackProps = {}) {
+    try {
+      switch (componentName) {
+        case 'MaterialIcons':
+          return this.loadMaterialIcons();
+        case 'LinearGradient':
+          return this.loadLinearGradient();
+        default:
+          console.warn(`Unknown component: ${componentName}`);
+          return null;
+      }
+    } catch (error) {
+      console.warn(`Failed to load component ${componentName}:`, error.message);
+      return null;
+    }
+  }
+
+  // Initialize all platform-specific components and modules
+  static async initializePlatform() {
+    const results = {
+      platform: Platform.OS,
+      initialized: {
+        components: {},
+        modules: {}
+      },
+      errors: []
+    };
+
+    // Initialize components
+    try {
+      results.initialized.components.MaterialIcons = !!this.loadMaterialIcons();
+      results.initialized.components.LinearGradient = !!this.loadLinearGradient();
+    } catch (error) {
+      results.errors.push(`Component initialization failed: ${error.message}`);
+    }
+
+    // Initialize modules
+    try {
+      results.initialized.modules.DocumentPicker = !!(await this.loadDocumentPicker());
+      results.initialized.modules.FileSystem = !!(await this.loadFileSystem());
+      results.initialized.modules.Mammoth = !!(await this.loadMammoth());
+      results.initialized.modules.XLSX = !!(await this.loadXLSX());
+    } catch (error) {
+      results.errors.push(`Module initialization failed: ${error.message}`);
+    }
+
+    this.logDebugInfo('Platform initialized', results);
+    return results;
+  }
+
+  // Get platform-specific style adjustments
+  static getPlatformStyles() {
+    if (this.isWeb()) {
+      return {
+        // Web-specific style adjustments
+        shadowOffset: undefined, // Use boxShadow instead
+        elevation: undefined, // Use boxShadow instead
+        // Add web-specific styles
+        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+        cursor: 'pointer'
+      };
+    } else {
+      return {
+        // Mobile-specific styles
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 2
+      };
+    }
+  }
+
+  // Enhanced error handling with platform context
+  static handlePlatformError(error, context = '') {
+    const platformContext = this.isWeb() ? 'Web' : 'Mobile';
+    const errorMessage = `[${platformContext}] ${context}: ${error.message}`;
+    
+    console.error(errorMessage, error);
+    
+    if (error.message.includes('requireNativeComponent')) {
+      return this.createError(
+        'Native component not available on this platform',
+        [
+          'This feature requires native mobile components',
+          'Try using the mobile app for full functionality',
+          'Some features are limited on web platform'
+        ]
+      );
+    }
+    
+    return this.createError(errorMessage);
   }
 }
 
