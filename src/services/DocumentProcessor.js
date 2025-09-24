@@ -224,7 +224,7 @@ class DocumentProcessor {
             cleanup();
             resolve(null);
           }
-        }, 30000); // 30 second timeout
+        }, 60000); // 30 second timeout
         
         document.body.appendChild(input);
         input.click();
@@ -354,7 +354,7 @@ async _storeDocumentWeb(file) {
       if (!RNFS) {
         throw PlatformUtils.createError(
           'File system not available',
-          ['Install react-native-fs', 'Check app permissions']
+          ['Install expo-file-system', 'Check app permissions']
         );
       }
 

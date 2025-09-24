@@ -125,13 +125,13 @@ class PlatformUtils {
           }
           return fallback;
         },
-        'react-native-fs': async () => {
+        'expo-file-system': async () => {
           if (this.isMobile()) {
             try {
-              const module = require('react-native-fs');
+              const module = require('expo-file-system');
               return module.default || module;
             } catch (error) {
-              console.warn('react-native-fs not available');
+              console.warn('expo-file-system not available');
               return fallback;
             }
           }
@@ -191,7 +191,7 @@ class PlatformUtils {
     }
     
     try {
-      const RNFS = require('react-native-fs');
+      const RNFS = require('expo-file-system');
       return RNFS.default || RNFS;
     } catch (error) {
       console.warn('RNFS not available:', error.message);
@@ -223,7 +223,7 @@ class PlatformUtils {
   static isWebIncompatible(moduleName) {
     const webIncompatibleModules = [
       'expo-document-picker',
-      'react-native-fs',
+      'expo-file-system',
       'react-native-pdf',
       'react-native-image-picker',
       'react-native-permissions',
@@ -503,12 +503,12 @@ class PlatformUtils {
           return { available: false, reason: error.message };
         }
       },
-      'react-native-fs': () => {
+      'expo-file-system': () => {
         if (this.isWeb()) {
           return { available: false, reason: 'web-incompatible', alternative: 'Browser APIs' };
         }
         try {
-          require('react-native-fs');
+          require('expo-file-system');
           return { available: true, reason: 'loaded' };
         } catch (error) {
           return { available: false, reason: error.message };

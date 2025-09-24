@@ -32,10 +32,10 @@ import {
   Menu,
   Divider,
   Switch,
-  Slider,
   FAB,
   Badge,
 } from 'react-native-paper';
+import { Slider } from '@react-native-community/slider';
 import { LinearGradient } from '../../components/shared/LinearGradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { WebView } from 'react-native-webview';

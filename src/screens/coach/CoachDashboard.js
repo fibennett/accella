@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   StyleSheet,
@@ -29,7 +29,8 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { LinearGradient } from '../../components/shared/LinearGradient';
 //import { MaterialIcons as Icon } from '@expo/vector-icons';
 import { BlurView } from '../../components/shared/BlurView';
-
+import DocumentProcessor from '../../services/DocumentProcessor';
+import { useFocusEffect } from '@react-navigation/native';
 import { COLORS } from '../../styles/colors';
 import { SPACING } from '../../styles/layout';
 import { TEXT_STYLES } from '../../styles/typography';
@@ -45,6 +46,7 @@ const CoachDashboard = ({ navigation }) => {
   const [currentTimeSlot, setCurrentTimeSlot] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
   const [formData, setFormData] = useState(null);
+  const [trainingPlansCount, setTrainingPlansCount] = useState(0);
   const scrollY = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(50)).current;
@@ -74,6 +76,23 @@ const CoachDashboard = ({ navigation }) => {
     return () => clearInterval(interval);
   }, []);
 
+  //coaching plan(s) counter
+      const loadTrainingPlansCount = useCallback(async () => {
+      try {
+        const plans = await DocumentProcessor.getTrainingPlans();
+        setTrainingPlansCount(plans.length);
+      } catch (error) {
+        console.error('Error loading training plans count:', error);
+        setTrainingPlansCount(0);
+      }
+    }, []);
+
+    useFocusEffect(
+      useCallback(() => {
+        loadTrainingPlansCount();
+      }, [loadTrainingPlansCount])
+    );
+
   const updateTimeSlot = () => {
     const hour = new Date().getHours();
     if (hour < 6) setCurrentTimeSlot('Late Night');
@@ -84,11 +103,18 @@ const CoachDashboard = ({ navigation }) => {
   };
 
   const onRefresh = async () => {
-    setRefreshing(true);
-    Vibration.vibrate(50);
-    // Simulate API call - in real app, dispatch actions to fetch latest data
+  setRefreshing(true);
+  Vibration.vibrate(50);
+  
+  try {
+    await loadTrainingPlansCount(); // Add this line
+    // Add any other refresh logic here
+  } catch (error) {
+    console.error('Error refreshing data:', error);
+  } finally {
     setTimeout(() => setRefreshing(false), 1500);
-  };
+  }
+};
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -116,15 +142,17 @@ const CoachDashboard = ({ navigation }) => {
       value: '24', 
       subtitle: 'active athletes',
       color: '#FF6B6B',
-      trend: '+3 this week'
+      trend: '+3 this week',
+      onPress: () => navigation.navigate('Players')
     },
     { 
       icon: 'assignment', 
       label: 'Plans', 
-      value: `${trainingPlans?.length || 8}`, 
+      value: `${trainingPlansCount}`, 
       subtitle: 'training programs',
       color: '#4ECDC4',
-      trend: '2 new plans'
+      trend: '2 new plans',
+      onPress: () => navigation.navigate('TrainingPlanLibrary')
     },
     { 
       icon: 'fitness-center', 
@@ -132,7 +160,8 @@ const CoachDashboard = ({ navigation }) => {
       value: `${sessions?.length || 32}`, 
       subtitle: 'this month',
       color: '#45B7D1',
-      trend: '12 completed'
+      trend: '12 completed',
+     onPress: () => navigation.navigate('UpcomingSessions')
     },
     { 
       icon: 'payments', 
@@ -140,7 +169,8 @@ const CoachDashboard = ({ navigation }) => {
       value: '$2,840', 
       subtitle: 'monthly earnings',
       color: '#F39C12',
-      trend: '+15% growth'
+      trend: '+15% growth',
+     onPress: () => navigation.navigate('ClientManagement')
     },
   ];
 
@@ -711,8 +741,13 @@ const getCoachInitials = () => {
           <Text style={styles.sectionTitle}>Coach Dashboard</Text>
           <View style={styles.statsGrid}>
             {liveStats.map((stat, index) => (
-              <Animated.View key={index} style={[styles.statCard, { backgroundColor: stat.color }]}>
-                <View style={styles.statContent}>
+              <TouchableOpacity 
+              key={index} 
+                style={[styles.statCard, { backgroundColor: stat.color }]}
+                onPress={stat.onPress} // Add this line
+                activeOpacity={stat.onPress ? 0.7 : 1} // Add this line
+              >
+              <View style={styles.statContent}>
                   <View style={styles.statHeader}>
                     <Icon name={stat.icon} size={28} color="white" />
                     <Text style={styles.statTrend}>{stat.trend}</Text>
@@ -721,7 +756,7 @@ const getCoachInitials = () => {
                   <Text style={styles.statLabel}>{stat.label}</Text>
                   <Text style={styles.statSubtitle}>{stat.subtitle}</Text>
                 </View>
-              </Animated.View>
+              </TouchableOpacity>
             ))}
           </View>
         </Animated.View>

@@ -129,56 +129,63 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
     }
   };
 
-  const handleDocumentUpload = async () => {
-    try {
-      setUploading(true);
-      setUploadProgress(0.1);
-      setUploadStatus('Selecting document...');
-      setIntegrityResult(null);
+const handleDocumentUpload = async () => {
+  try {
+    setUploading(true);
+    setUploadProgress(0.1);
+    setUploadStatus('Selecting document...');
+    setIntegrityResult(null);
 
-      // Step 1: Select document
-      const file = await DocumentProcessor.selectDocument();
-      if (!file) {
-        setUploading(false);
-        return;
-      }
-
-      setUploadProgress(0.3);
-      setUploadStatus('Validating file format...');
-
-      // Step 2: Validate file before storage
-      const validation = DocumentProcessor.validateFileForPlatform(file);
-      if (!validation.isValid) {
-        showValidationError(validation);
-        setUploading(false);
-        return;
-      }
-
-      setUploadProgress(0.5);
-      setUploadStatus('Storing file and checking integrity...');
-
-      // Step 3: Store with integrity check
-      const result = await DocumentProcessor.storeDocumentWithIntegrityCheck(file);
-      setIntegrityResult(result.integrityResult);
-
-      setUploadProgress(0.9);
-      setUploadStatus('Integrity verification complete');
-
-      await loadDocuments();
-
-      // Step 4: Handle integrity results
-      handleIntegrityResults(result);
-
-    } catch (error) {
-      console.error('Upload failed:', error);
-      const platformError = PlatformUtils.handlePlatformError(error, 'Document Upload');
-      showUploadError(platformError);
-    } finally {
+    // Step 1: Select document
+    const file = await DocumentProcessor.selectDocument();
+    if (!file) {
       setUploading(false);
-      setUploadProgress(0);
-      setUploadStatus('');
+      return;
     }
-  };
+
+    setUploadProgress(0.3);
+    setUploadStatus('Validating file format...');
+
+    // Step 2: Validate file before storage
+    const validation = DocumentProcessor.validateFileForPlatform(file);
+    if (!validation.isValid) {
+      showValidationError(validation);
+      setUploading(false);
+      return;
+    }
+
+    setUploadProgress(0.5);
+    setUploadStatus('Storing file and checking integrity...');
+
+    // Step 3: Store with integrity check
+    const result = await DocumentProcessor.storeDocumentWithIntegrityCheck(file);
+    setIntegrityResult(result.integrityResult);
+
+    setUploadProgress(0.9);
+    setUploadStatus('Integrity verification complete');
+
+    // Step 4: Navigate directly to processing instead of showing in list
+    navigation.navigate('PlanProcessing', {
+      documentId: result.document.id,
+      onComplete: (trainingPlan) => {
+        navigation.navigate('TrainingPlanLibrary', {
+          newPlanId: trainingPlan?.id,
+          showSuccess: true,
+          message: `"${trainingPlan?.title || 'Training Plan'}" created from document!`
+        });
+      }
+    });
+
+  } catch (error) {
+    console.error('Upload failed:', error);
+    const platformError = PlatformUtils.handlePlatformError(error, 'Document Upload');
+    showUploadError(platformError);
+  } finally {
+    setUploading(false);
+    setUploadProgress(0);
+    setUploadStatus('');
+  }
+};
 
   const showValidationError = (validation) => {
     Alert.alert(

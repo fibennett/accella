@@ -1,3 +1,4 @@
+//src/screens/coach/training/TrainingPlanDetails.js
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -10,6 +11,7 @@ import {
   TouchableOpacity,
   FlatList,
   Share,
+  ActivityIndicator,
 } from 'react-native';
 import {
   Card,
@@ -58,8 +60,10 @@ const TrainingPlanDetails = ({ navigation, route }) => {
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [documentModalVisible, setDocumentModalVisible] = useState(false);
+  const [documentUploadModalVisible, setDocumentUploadModalVisible] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState(null);
-
+  const [allDocuments, setAllDocuments] = useState([]);
+  const [loadingDocs, setLoadingDocs] = useState(true);
   // Difficulty colors mapping
   const difficultyColors = {
     beginner: COLORS.success,
@@ -104,6 +108,25 @@ const tabs = [
       ]).start();
     }
   }, [plan]);
+
+  // Load all documents from DocumentProcessor
+    useEffect(() => {
+      const loadAllDocuments = async () => {
+        try {
+          const docs = await DocumentProcessor.getStoredDocuments();
+          setAllDocuments(docs);
+        } catch (error) {
+          console.error('Error loading documents:', error);
+          Alert.alert('Error', 'Failed to load documents');
+        } finally {
+          setLoadingDocs(false);
+        }
+      };
+
+      if (activeTab === 'documents') {
+        loadAllDocuments();
+      }
+    }, [activeTab]);
 
   const loadPlanDetails = async () => {
     try {
@@ -274,6 +297,235 @@ const handleDocumentDownload = (document) => {
   );
 };
 
+//Add document upload modal functionality
+const handleDocumentUpload = async () => {
+  try {
+    setDocumentUploadModalVisible(false);
+    
+    // Use DocumentProcessor to select and upload document
+    const file = await DocumentProcessor.selectDocument();
+    if (!file) return;
+
+    // Show loading state
+    Alert.alert('Uploading...', 'Please wait while we process your document.');
+
+    // Store document with integrity check
+    const result = await DocumentProcessor.storeDocumentWithIntegrityCheck(file);
+    
+    // Show success message
+    setSnackbarMessage(`Document "${result.document.originalName}" uploaded successfully!`);
+    setSnackbarVisible(true);
+    
+    // Reload documents if we're on the documents tab
+    if (activeTab === 'documents') {
+      loadPlanDetails(); // This will trigger a refresh of the documents
+    }
+  } catch (error) {
+    console.error('Document upload failed:', error);
+    Alert.alert('Upload Failed', error.message || 'Failed to upload document. Please try again.');
+  }
+};
+
+const showDocumentOptions = (document) => {
+  Alert.alert(
+    document.originalName,
+    'Choose an action:',
+    [
+      { text: 'View Document', onPress: () => handleDocumentPress(document) },
+      { text: 'Process as Training Plan', onPress: () => processDocumentAsPlan(document) },
+      { text: 'Share', onPress: () => shareDocument(document) },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteDocument(document) },
+      { text: 'Cancel', style: 'cancel' }
+    ]
+  );
+};
+
+const processDocumentAsPlan = (document) => {
+  navigation.navigate('PlanProcessing', {
+    documentId: document.id,
+    onComplete: (trainingPlan) => {
+      navigation.navigate('TrainingPlanLibrary', {
+        newPlanId: trainingPlan?.id,
+        showSuccess: true,
+        message: `"${trainingPlan?.title || 'Training Plan'}" created from document!`
+      });
+    }
+  });
+};
+
+const shareDocument = async (document) => {
+  try {
+    await Share.share({
+      message: `Check out this training document: ${document.originalName}`,
+      title: document.originalName,
+    });
+  } catch (error) {
+    console.error('Share error:', error);
+  }
+};
+
+const deleteDocument = (document) => {
+  Alert.alert(
+    'Delete Document',
+    `Are you sure you want to delete "${document.originalName}"? This action cannot be undone.`,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await DocumentProcessor.deleteDocument(document.id);
+            setSnackbarMessage('Document deleted successfully');
+            setSnackbarVisible(true);
+            loadPlanDetails(); // Refresh the view
+          } catch (error) {
+            Alert.alert('Delete Failed', 'Could not delete document. Please try again.');
+          }
+        }
+      }
+    ]
+  );
+};
+
+//handle favourite
+const handleFavoriteDocument = async (document) => {
+  try {
+    const updatedDoc = {
+      ...document,
+      isFavorite: !document.isFavorite,
+      favoritedAt: !document.isFavorite ? new Date().toISOString() : null
+    };
+    
+    await DocumentProcessor.updateDocumentMetadata(updatedDoc);
+    
+    // Update local state
+    const updatedDocs = allDocuments.map(doc => 
+      doc.id === document.id ? updatedDoc : doc
+    );
+    setAllDocuments(updatedDocs);
+  } catch (error) {
+    Alert.alert('Favorite Error', `Could not update favorite status: ${error.message}`);
+  }
+};
+
+const handlePinDocument = async (document) => {
+  try {
+    const updatedDoc = {
+      ...document,
+      isPinned: !document.isPinned,
+      pinnedAt: !document.isPinned ? new Date().toISOString() : null
+    };
+    
+    await DocumentProcessor.updateDocumentMetadata(updatedDoc);
+    
+    // Update local state
+    const updatedDocs = allDocuments.map(doc => 
+      doc.id === document.id ? updatedDoc : doc
+    );
+    setAllDocuments(updatedDocs);
+    
+    setSnackbarMessage(document.isPinned ? 'Document unpinned' : 'Document pinned');
+    setSnackbarVisible(true);
+  } catch (error) {
+    Alert.alert('Pin Error', `Could not pin document: ${error.message}`);
+  }
+};
+
+const handleDeleteDocument = async (document) => {
+  if (document.isPinned) {
+    Alert.alert(
+      'Cannot Delete Pinned Document',
+      'This document is pinned and protected from deletion. Unpin it first to delete.',
+      [{ text: 'OK' }]
+    );
+    return;
+  }
+
+  Alert.alert(
+    'Delete Document',
+    `Are you sure you want to delete "${document.originalName}"? This action cannot be undone.`,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await DocumentProcessor.deleteDocument(document.id);
+            
+            // Update local state
+            const updatedDocs = allDocuments.filter(doc => doc.id !== document.id);
+            setAllDocuments(updatedDocs);
+            
+            setSnackbarMessage('Document deleted successfully');
+            setSnackbarVisible(true);
+          } catch (error) {
+            Alert.alert('Delete Failed', 'Could not delete document. Please try again.');
+          }
+        }
+      }
+    ]
+  );
+};
+
+// Add this new function inside the component, after deleteDocument function
+const renderTabSpecificFAB = () => {
+  if (!plan) return null;
+
+  const fabConfigs = {
+    overview: {
+      icon: "play-arrow",
+      label: "Start Training",
+      onPress: handleStartPlan,
+      show: plan.isOwned
+    },
+    documents: {
+      icon: "add",
+      label: "Add Document",
+      onPress: () => setDocumentUploadModalVisible(true),
+      show: true
+    },
+    sessions: {
+      icon: "add",
+      label: "Add Session",
+      onPress: () => navigation.navigate('SessionBuilder', { planId: plan.id }),
+      show: true
+    },
+    progress: {
+      icon: "analytics",
+      label: "View Progress",
+      onPress: () => Alert.alert('Feature Coming Soon', 'Detailed progress view will be available soon!'),
+      show: true
+    },
+    nutrition: {
+      icon: "lightbulb",
+      label: "Nutrition Tips",
+      onPress: () => Alert.alert('Nutrition Tip', 'Stay hydrated! Drink water 30 minutes before your workout for optimal performance.'),
+      show: true
+    },
+    analytics: {
+      icon: "assessment",
+      label: "Analytics",
+      onPress: () => navigation.navigate('PerformanceAnalytics', { planId: plan.id }),
+      show: true
+    }
+  };
+
+  const currentFAB = fabConfigs[activeTab];
+  
+  if (!currentFAB || !currentFAB.show) return null;
+
+  return (
+    <FAB
+      icon={currentFAB.icon}
+      style={styles.fab}
+      onPress={currentFAB.onPress}
+      label={currentFAB.label}
+    />
+  );
+};
+
   const renderOverview = () => (
     <View style={{ padding: SPACING.md }}>
       {/* Plan Stats */}
@@ -396,83 +648,136 @@ const handleDocumentDownload = (document) => {
     </View>
   );
 
-  const renderDocuments = () => (
-  <View style={{ padding: SPACING.md }}>
-    {plan.documents && plan.documents.length > 0 ? (
-      <FlatList
-        data={plan.documents}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item: document }) => (
-          <Card style={styles.documentCard}>
-            <TouchableOpacity
-              onPress={() => handleDocumentPress(document)}
-              activeOpacity={0.7}
-            >
-              <Card.Content>
-                <View style={styles.documentHeader}>
-                  <View style={styles.documentIconContainer}>
-                    <Icon 
-                      name={getDocumentIcon(document)} 
-                      size={32} 
-                      color={getDocumentColor(document)} 
-                    />
-                  </View>
-                  <View style={styles.documentInfo}>
-                    <Text style={[TEXT_STYLES.subtitle1, { fontWeight: 'bold' }]}>
-                      {document.originalName}
-                    </Text>
-                    <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
-                      {getDocumentTypeLabel(document)} • {formatFileSize(document.size)}
-                    </Text>
-                    <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
-                      Uploaded: {new Date(document.uploadedAt).toLocaleDateString()}
-                    </Text>
-                  </View>
-                  <View style={styles.documentActions}>
-                    <IconButton
-                      icon="visibility"
-                      size={20}
-                      onPress={() => handleDocumentPress(document)}
-                    />
-                    <IconButton
-                      icon="download"
-                      size={20}
-                      onPress={() => handleDocumentDownload(document)}
-                    />
-                  </View>
-                </View>
-                
-                {document.description && (
-                  <Text style={[TEXT_STYLES.body2, { marginTop: SPACING.sm, color: COLORS.textSecondary }]}>
-                    {document.description}
-                  </Text>
-                )}
-              </Card.Content>
-            </TouchableOpacity>
-          </Card>
+  const renderDocuments = () => {
+    if (loadingDocs) {
+      return (
+        <View style={[styles.emptyState, { minHeight: 200 }]}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+          <Text style={[TEXT_STYLES.body2, { marginTop: SPACING.md }]}>
+            Loading documents...
+          </Text>
+        </View>
+      );
+    }
+
+    return (
+      <View style={{ padding: SPACING.md }}>
+        {allDocuments.length > 0 ? (
+          <FlatList
+            data={allDocuments}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item: document }) => (
+              <Card style={styles.documentCard}>
+                <TouchableOpacity
+                  onPress={() => handleDocumentPress(document)}
+                  activeOpacity={0.7}
+                >
+                  <Card.Content>
+                    <View style={styles.documentContainer}>
+                      {/* Favorite Icon - Top Left */}
+                      <View style={styles.favoriteContainer}>
+                        <IconButton
+                          icon={document.isFavorite ? "favorite" : "favorite-border"}
+                          iconColor={document.isFavorite ? "#FF6B6B" : COLORS.secondary}
+                          size={20}
+                          onPress={() => handleFavoriteDocument(document)}
+                          style={styles.favoriteIcon}
+                        />
+                      </View>
+
+                      {/* Pin Icon - Top Right */}
+                      <View style={styles.pinContainer}>
+                        <IconButton
+                          icon={document.isPinned ? "push-pin" : "outline"}
+                          iconColor={document.isPinned ? "#4CAF50" : COLORS.secondary}
+                          size={18}
+                          onPress={() => handlePinDocument(document)}
+                          style={styles.pinIcon}
+                        />
+                      </View>
+
+                      <View style={styles.documentHeader}>
+                        <View style={styles.documentIconContainer}>
+                          <Icon 
+                            name={getDocumentIcon(document)} 
+                            size={32} 
+                            color={getDocumentColor(document)} 
+                          />
+                        </View>
+                        <View style={styles.documentInfo}>
+                          <Text style={[TEXT_STYLES.subtitle1, { fontWeight: 'bold' }]}>
+                            {document.originalName}
+                          </Text>
+                          <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
+                            {getDocumentTypeLabel(document)} • {formatFileSize(document.size)}
+                          </Text>
+                          <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
+                            Uploaded: {new Date(document.uploadedAt).toLocaleDateString()}
+                          </Text>
+                          {document.processed && (
+                            <Chip
+                              compact
+                              mode="flat"
+                              style={{ 
+                                backgroundColor: COLORS.success + '20',
+                                alignSelf: 'flex-start',
+                                marginTop: SPACING.xs
+                              }}
+                              textStyle={{ color: COLORS.success, fontSize: 10 }}
+                            >
+                              Processed
+                            </Chip>
+                          )}
+                        </View>
+                        <View style={styles.documentActions}>
+                          <IconButton
+                            icon="visibility"
+                            size={20}
+                            onPress={() => handleDocumentPress(document)}
+                          />
+                          <IconButton
+                            icon="more-vert"
+                            size={20}
+                            onPress={() => showDocumentOptions(document)}
+                          />
+                        </View>
+                      </View>
+
+                      {/* Delete Icon - Bottom Right */}
+                      <View style={styles.deleteContainer}>
+                        <IconButton
+                          icon="delete-outline"
+                          iconColor={document.isPinned ? COLORS.disabled : "#F44336"}
+                          size={20}
+                          onPress={() => handleDeleteDocument(document)}
+                          style={[
+                            styles.deleteIcon,
+                            document.isPinned && styles.disabledIcon
+                          ]}
+                          disabled={document.isPinned}
+                        />
+                      </View>
+                    </View>
+                  </Card.Content>
+                </TouchableOpacity>
+              </Card>
+            )}
+            scrollEnabled={false}
+          />
+        ) : (
+          <View style={styles.emptyState}>
+            <Icon name="description" size={64} color={COLORS.textSecondary} />
+            <Text style={[TEXT_STYLES.h3, { marginTop: SPACING.md, color: COLORS.textSecondary }]}>
+              No Documents Available
+            </Text>
+            <Text style={[TEXT_STYLES.body2, { marginTop: SPACING.sm, textAlign: 'center', color: COLORS.textSecondary }]}>
+              Upload your first document to get started with your training plans.
+            </Text>
+          </View>
         )}
-        scrollEnabled={false}
-      />
-    ) : (
-      <View style={styles.emptyState}>
-        <Icon name="description" size={64} color={COLORS.textSecondary} />
-        <Text style={[TEXT_STYLES.h3, { marginTop: SPACING.md, color: COLORS.textSecondary }]}>
-          No Documents Available
-        </Text>
-        <Text style={[TEXT_STYLES.body2, { marginTop: SPACING.sm, textAlign: 'center', color: COLORS.textSecondary }]}>
-          This training plan doesn't have any documents attached yet.
-        </Text>
-        <Button
-          mode="contained"
-          style={{ marginTop: SPACING.md }}
-          onPress={() => navigation.navigate('CoachingPlanUploadScreen', { planId: plan.id })}
-        >
-          Add Documents
-        </Button>
       </View>
-    )}
-  </View>
-);
+    );
+  };
 
   const renderSessions = () => (
     <View style={{ padding: SPACING.md }}>
@@ -887,16 +1192,6 @@ const handleDocumentDownload = (document) => {
         </ScrollView>
       </Animated.View>
 
-      {/* Floating Action Button */}
-      {plan.isOwned && (
-        <FAB
-          icon="play-arrow"
-          style={styles.fab}
-          onPress={handleStartPlan}
-          label="Start Training"
-        />
-      )}
-
       {/* Snackbar */}
       <Portal>
         <Snackbar
@@ -908,6 +1203,43 @@ const handleDocumentDownload = (document) => {
           <Text style={{ color: 'white' }}>{snackbarMessage}</Text>
         </Snackbar>
       </Portal>
+
+      {/* Document Upload Modal */}
+<Portal>
+  <Modal
+    visible={documentUploadModalVisible}
+    onDismiss={() => setDocumentUploadModalVisible(false)}
+    contentContainerStyle={styles.modalContent}
+  >
+    <View style={{ alignItems: 'center' }}>
+      <Icon name="cloud-upload" size={48} color={COLORS.primary} />
+      <Text style={[TEXT_STYLES.h3, { marginVertical: SPACING.md }]}>
+        Upload Document
+      </Text>
+      <Text style={[TEXT_STYLES.body2, { textAlign: 'center', marginBottom: SPACING.lg }]}>
+        Select a document to add to your training library. Supported formats: PDF, Word, Excel, Text files.
+      </Text>
+      
+      <View style={{ flexDirection: 'row', width: '100%', justifyContent: 'space-between' }}>
+        <Button
+          mode="outlined"
+          onPress={() => setDocumentUploadModalVisible(false)}
+          style={{ flex: 1, marginRight: SPACING.sm }}
+        >
+          Cancel
+        </Button>
+        <Button
+          mode="contained"
+          onPress={handleDocumentUpload}
+          style={{ flex: 1, marginLeft: SPACING.sm }}
+          icon="upload"
+        >
+          Select File
+        </Button>
+      </View>
+    </View>
+  </Modal>
+</Portal>
 
       {/* Session Modal */}
       <Portal>
@@ -934,6 +1266,9 @@ const handleDocumentDownload = (document) => {
           )}
         </Modal>
       </Portal>
+
+      {/* Tab-specific Floating Action Button */}
+      {renderTabSpecificFAB()}
     </View>
   );
 };
@@ -1193,6 +1528,45 @@ const styles = {
   documentActions: {
     flexDirection: 'row',
   },
+  documentContainer: {
+  position: 'relative',
+},
+favoriteContainer: {
+  position: 'absolute',
+  top: -8,
+  left: -8,
+  zIndex: 2,
+},
+favoriteIcon: {
+  margin: 0,
+  width: 32,
+  height: 32,
+},
+pinContainer: {
+  position: 'absolute',
+  top: -8,
+  right: -8,
+  zIndex: 2,
+},
+pinIcon: {
+  margin: 0,
+  width: 30,
+  height: 30,
+},
+deleteContainer: {
+  position: 'absolute',
+  bottom: -8,
+  right: -8,
+  zIndex: 2,
+},
+deleteIcon: {
+  margin: 0,
+  width: 32,
+  height: 32,
+},
+disabledIcon: {
+  opacity: 0.3,
+},
 };
 
 export default TrainingPlanDetails;
