@@ -113,13 +113,13 @@ class PlatformUtils {
       }
       
       const moduleMap = {
-        'react-native-document-picker': async () => {
+        'expo-document-picker': async () => {
           if (this.isMobile()) {
             try {
-              const module = require('react-native-document-picker');
+              const module = require('expo-picker');
               return module.default || module;
             } catch (error) {
-              console.warn('react-native-document-picker not available');
+              console.warn('expo-document-picker not available');
               return fallback;
             }
           }
@@ -177,7 +177,7 @@ class PlatformUtils {
     }
     
     try {
-      const DocumentPicker = require('react-native-document-picker');
+      const DocumentPicker = require('expo-document-picker');
       return DocumentPicker.default || DocumentPicker;
     } catch (error) {
       console.warn('DocumentPicker not available:', error.message);
@@ -222,9 +222,9 @@ class PlatformUtils {
   // Check if module is web incompatible
   static isWebIncompatible(moduleName) {
     const webIncompatibleModules = [
-      'react-native-document-picker',
+      'expo-document-picker',
       'react-native-fs',
-      'react-native-pdf-lib',
+      'react-native-pdf',
       'react-native-image-picker',
       'react-native-permissions',
       'react-native-keychain',
@@ -492,12 +492,12 @@ class PlatformUtils {
 
     // Check native modules
     const moduleCheckers = {
-      'react-native-document-picker': () => {
+      'expo-document-picker': () => {
         if (this.isWeb()) {
           return { available: false, reason: 'web-incompatible', alternative: 'HTML file input' };
         }
         try {
-          require('react-native-document-picker');
+          require('expo-document-picker');
           return { available: true, reason: 'loaded' };
         } catch (error) {
           return { available: false, reason: error.message };

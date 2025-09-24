@@ -30,7 +30,7 @@ import { BlurView } from '../../../components/shared/BlurView';
 import { LinearGradient } from '../../../components/shared/BlurView';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useSelector, useDispatch } from 'react-redux';
-import DocumentPicker from 'react-native-document-picker';
+import DocumentPicker from 'expo-document-picker';
 import RNFetchBlob from 'rn-fetch-blob';
 
 // Import your established constants

@@ -234,14 +234,14 @@ class DocumentProcessor {
     });
   }
 
-  // Mobile document selection using react-native-document-picker
+  // Mobile document selection using expo-document-picker
   async _selectDocumentMobile() {
     try {
       if (!DocumentPicker) {
         throw PlatformUtils.createError(
           'Document picker not available',
           [
-            'Install react-native-document-picker',
+            'Install expo-document-picker',
             'Restart the app',
             'Update to latest version'
           ]

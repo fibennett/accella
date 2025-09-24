@@ -4,9 +4,6 @@
     "slug": "acceilla",
     "version": "1.0.1",
     "orientation": "portrait",
-    "cli": {
-      "appVersionSource": "local"
-    },
     "icon": "./src/assets/icon.png",
     "userInterfaceStyle": "light",
     "scheme": "com.acceilla.acceilla",
