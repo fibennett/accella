@@ -81,7 +81,8 @@
       ],
       "expo-font",
       "expo-secure-store",
-      "expo-updates"
+      "expo-updates",
+      "expo-sqlite"
     ],
     "updates": {
       "enabled": true,

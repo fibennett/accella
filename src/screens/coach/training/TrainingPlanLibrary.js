@@ -25,6 +25,7 @@ import {
   Portal,
   Modal,
   Divider,
+  Snackbar,
 } from 'react-native-paper';
 import { useSelector, useDispatch } from 'react-redux';
 import { BlurView } from '../../../components/shared/BlurView';
@@ -41,7 +42,7 @@ import DocumentProcessor from '../../../services/DocumentProcessor';
 
 const { width: screenWidth } = Dimensions.get('window');
 
-const TrainingPlanLibrary = ({ navigation }) => {
+const TrainingPlanLibrary = ({ navigation, route }) => {
   const dispatch = useDispatch();
   const { user, isOnline } = useSelector(state => state.auth);
   const { trainingPlans, error } = useSelector(state => state.training);
@@ -59,6 +60,10 @@ const TrainingPlanLibrary = ({ navigation }) => {
   const [viewMode, setViewMode] = useState('grid');
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
+  
+  // Success message state
+  const [snackbarVisible, setSnackbarVisible] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
 
   const categories = [
     { key: 'all', label: 'All Sports', icon: 'stadium' },
@@ -75,19 +80,44 @@ const TrainingPlanLibrary = ({ navigation }) => {
     advanced: COLORS.error,
   };
 
+  // Handle route params for success message
+  useEffect(() => {
+    const { showSuccess, message, newPlanId } = route.params || {};
+    
+    if (showSuccess && message) {
+      setSnackbarMessage(message);
+      setSnackbarVisible(true);
+      
+      // If there's a new plan ID, scroll to it after loading
+      if (newPlanId) {
+        // We'll handle this after plans are loaded
+      }
+    }
+  }, [route.params]);
+
   // MOVED: Define loadTrainingPlans function before it's used
   const loadTrainingPlans = useCallback(async () => {
     try {
       setLoading(true);
       const realPlans = await DocumentProcessor.getTrainingPlans();
       setPlans(realPlans);
+      
+      // Check if we need to highlight a newly created plan
+      const { newPlanId } = route.params || {};
+      if (newPlanId) {
+        const newPlan = realPlans.find(plan => plan.id === newPlanId);
+        if (newPlan) {
+          // Highlight the new plan (you can add visual highlighting here)
+          console.log('New plan found:', newPlan.title);
+        }
+      }
     } catch (error) {
       console.error('Error loading training plans:', error);
       Alert.alert('Error', 'Failed to load training plans');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [route.params]);
 
   // Refresh handler
   const onRefresh = useCallback(async () => {
@@ -120,15 +150,19 @@ const TrainingPlanLibrary = ({ navigation }) => {
   }, [navigation]);
 
   const handlePreviewPlan = useCallback((plan) => {
-    Alert.alert('Feature Coming Soon', 'Plan preview functionality will be available in the next update! 🏃‍♂️');
+    Alert.alert('Feature Coming Soon', 'Plan preview functionality will be available in the next update!');
   }, []);
 
   const handlePurchasePlan = useCallback((plan) => {
-    Alert.alert('Feature Coming Soon', 'Marketplace payment system will be available in the next update! 💳');
+    Alert.alert('Feature Coming Soon', 'Marketplace payment system will be available in the next update!');
   }, []);
 
   const handleCreatePlan = useCallback(() => {
     navigation.navigate('CreateTrainingPlan');
+  }, [navigation]);
+
+  const handleUploadPlan = useCallback(() => {
+    navigation.navigate('CoachingPlanUploadScreen');
   }, [navigation]);
 
   // Animation setup
@@ -173,6 +207,10 @@ const TrainingPlanLibrary = ({ navigation }) => {
   }
 
   const renderPlanCard = ({ item: plan, index }) => {
+    // Check if this is a newly created plan
+    const { newPlanId } = route.params || {};
+    const isNewPlan = plan.id === newPlanId;
+
     return (
       <Animated.View
         style={{
@@ -189,6 +227,9 @@ const TrainingPlanLibrary = ({ navigation }) => {
             marginHorizontal: SPACING.sm,
             elevation: 4,
             borderRadius: 12,
+            // Highlight new plan with a subtle border
+            borderWidth: isNewPlan ? 2 : 0,
+            borderColor: isNewPlan ? COLORS.primary : 'transparent',
           }}>
             <LinearGradient
               colors={plan.isOwned ? ['#667eea', '#764ba2'] : ['#e0e0e0', '#bdbdbd']}
@@ -202,9 +243,25 @@ const TrainingPlanLibrary = ({ navigation }) => {
             >
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <View style={{ flex: 1 }}>
-                  <Text style={[TEXT_STYLES.h3, { color: 'white', marginBottom: SPACING.xs }]}>
-                    {plan.title}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={[TEXT_STYLES.h3, { color: 'white', marginBottom: SPACING.xs }]}>
+                      {plan.title}
+                    </Text>
+                    {isNewPlan && (
+                      <Text style={{
+                        marginLeft: 8,
+                        backgroundColor: 'rgba(255, 255, 255, 0.3)',
+                        paddingHorizontal: 6,
+                        paddingVertical: 2,
+                        borderRadius: 12,
+                        fontSize: 10,
+                        color: 'white',
+                        fontWeight: 'bold',
+                      }}>
+                        NEW
+                      </Text>
+                    )}
+                  </View>
                   <Text style={[TEXT_STYLES.caption, { color: 'rgba(255,255,255,0.8)' }]}>
                     {plan.creator} • {plan.duration}
                   </Text>
@@ -335,7 +392,7 @@ const TrainingPlanLibrary = ({ navigation }) => {
       >
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md }}>
           <Text style={[TEXT_STYLES.h2, { color: 'white' }]}>
-            Training Library 📚
+            Training Library
           </Text>
           <View style={{ flexDirection: 'row' }}>
             <IconButton
@@ -400,25 +457,68 @@ const TrainingPlanLibrary = ({ navigation }) => {
               No plans found
             </Text>
             <Text style={[TEXT_STYLES.body2, { marginTop: SPACING.sm, color: COLORS.textSecondary, textAlign: 'center' }]}>
-              Try adjusting your search or category filter
+              Try adjusting your search or category filter, or create your first training plan!
             </Text>
+            <Button
+              mode="contained"
+              onPress={handleCreatePlan}
+              style={{ marginTop: SPACING.md }}
+            >
+              Create Your First Plan
+            </Button>
           </View>
         }
       />
 
-      {/* Floating Action Button */}
-      <FAB
-        icon="plus"
-        style={{
-          position: 'absolute',
-          margin: SPACING.md,
-          right: 0,
-          bottom: 0,
-          backgroundColor: COLORS.primary,
-        }}
-        onPress={handleCreatePlan}
-        label="Create Plan"
-      />
+      {/* Multiple Floating Action Buttons */}
+      <View style={{ position: 'absolute', right: SPACING.md, bottom: SPACING.md }}>
+        <FAB
+          icon="upload"
+          style={{
+            backgroundColor: COLORS.secondary,
+            marginBottom: SPACING.sm,
+          }}
+          size="small"
+          onPress={handleUploadPlan}
+          label="Upload Plan"
+        />
+        <FAB
+          icon="plus"
+          style={{
+            backgroundColor: COLORS.primary,
+          }}
+          onPress={handleCreatePlan}
+          label="Create Plan"
+        />
+      </View>
+
+      {/* Success Snackbar */}
+      <Portal>
+        <Snackbar
+          visible={snackbarVisible}
+          onDismiss={() => setSnackbarVisible(false)}
+          duration={5000}
+          style={{
+            backgroundColor: COLORS.success,
+          }}
+          action={{
+            label: 'View',
+            onPress: () => {
+              setSnackbarVisible(false);
+              const { newPlanId } = route.params || {};
+              if (newPlanId) {
+                const newPlan = plans.find(plan => plan.id === newPlanId);
+                if (newPlan) {
+                  handlePlanPress(newPlan);
+                }
+              }
+            },
+            textColor: 'white',
+          }}
+        >
+          <Text style={{ color: 'white' }}>{snackbarMessage}</Text>
+        </Snackbar>
+      </Portal>
 
       {/* Filter Modal */}
       <Portal>
@@ -473,7 +573,7 @@ const TrainingPlanLibrary = ({ navigation }) => {
               mode="contained"
               onPress={() => {
                 setFilterModalVisible(false);
-                Alert.alert('Feature Coming Soon', 'Advanced filtering options will be available in the next update! 🔍');
+                Alert.alert('Feature Coming Soon', 'Advanced filtering options will be available in the next update!');
               }}
             >
               Apply

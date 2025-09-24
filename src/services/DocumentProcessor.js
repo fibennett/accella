@@ -287,35 +287,66 @@ class DocumentProcessor {
   }
 
   // Web document storage
-  async _storeDocumentWeb(file) {
+// Web document storage with file data preservation
+// Fixed _storeDocumentWeb method
+async _storeDocumentWeb(file) {
+  try {
+    const documentId = `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Store the file data for later processing - ensure it's properly stored
+    let webFileData = null;
     try {
-      const documentId = `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      const metadata = {
-        id: documentId,
-        originalName: file.name,
-        type: file.type,
-        size: file.size,
-        uploadedAt: new Date().toISOString(),
-        processed: false,
-        platform: 'web',
-        uri: file.uri
-      };
-      
-      const existingDocs = await this.getStoredDocuments();
-      existingDocs.push(metadata);
-      await AsyncStorage.setItem('coaching_documents', JSON.stringify(existingDocs));
-      
-      PlatformUtils.logDebugInfo('Web document stored', { 
-        documentId, 
-        size: file.size 
-      });
-      
-      return metadata;
+      if (file.file && typeof file.file.arrayBuffer === 'function') {
+        webFileData = await file.file.arrayBuffer();
+        console.log('File data stored successfully, size:', webFileData.byteLength);
+      } else {
+        console.warn('File object does not have arrayBuffer method');
+      }
     } catch (error) {
-      throw PlatformUtils.handlePlatformError(error, 'Web Document Storage');
+      console.error('Could not store file data:', error.message);
+      throw PlatformUtils.createError(
+        'Could not read file data',
+        ['Try selecting the file again', 'Ensure the file is not corrupted']
+      );
     }
+    
+    if (!webFileData) {
+      throw PlatformUtils.createError(
+        'No file data available for storage',
+        ['Try selecting the file again', 'Check if the file is accessible']
+      );
+    }
+    
+    const metadata = {
+      id: documentId,
+      originalName: file.name,
+      type: file.type,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+      processed: false,
+      platform: 'web',
+      uri: file.uri,
+      // Store as Uint8Array for better serialization
+      webFileData: Array.from(new Uint8Array(webFileData))
+    };
+    
+    const existingDocs = await this.getStoredDocuments();
+    existingDocs.push(metadata);
+    
+    await AsyncStorage.setItem('coaching_documents', JSON.stringify(existingDocs));
+    
+    PlatformUtils.logDebugInfo('Web document stored', { 
+      documentId, 
+      size: file.size,
+      hasFileData: !!webFileData,
+      dataSize: webFileData.byteLength
+    });
+    
+    return metadata;
+  } catch (error) {
+    throw PlatformUtils.handlePlatformError(error, 'Web Document Storage');
   }
+}
 
   // Mobile document storage
   async _storeDocumentMobile(file) {
@@ -361,27 +392,64 @@ class DocumentProcessor {
   }
 
   // Process training plan with enhanced error handling
-  async processTrainingPlan(documentId) {
-    try {
-      await this.ensureInitialized();
-      
-      const documents = await this.getStoredDocuments();
-      const document = documents.find(doc => doc.id === documentId);
-      
-      if (!document) {
-        throw PlatformUtils.createError('Document not found');
+// Improved processTrainingPlan method with better error handling
+async processTrainingPlan(documentId) {
+  try {
+    await this.ensureInitialized();
+    
+    const documents = await this.getStoredDocuments();
+    const document = documents.find(doc => doc.id === documentId);
+    
+    if (!document) {
+      throw PlatformUtils.createError('Document not found in storage');
+    }
+
+    // Validate that we have file data before proceeding
+    if (PlatformUtils.isWeb()) {
+      if (!document.webFileData || !Array.isArray(document.webFileData) || document.webFileData.length === 0) {
+        throw PlatformUtils.createError(
+          'File data is missing or corrupted',
+          [
+            'Try uploading the file again',
+            'Process the file immediately after upload',
+            'Check if the browser cleared the data'
+          ]
+        );
       }
-
-      PlatformUtils.logDebugInfo('Processing training plan', { 
-        documentId, 
-        type: document.type,
-        platform: document.platform 
-      });
-
-      // Extract text content based on file type
-      let extractedText = '';
-      const fileType = document.type.toLowerCase();
+      console.log('Document has web file data, size:', document.webFileData.length);
+    } else {
+      if (!document.localPath) {
+        throw PlatformUtils.createError(
+          'Local file path is missing',
+          ['Try uploading the file again', 'Check app permissions']
+        );
+      }
       
+      // Verify file still exists on mobile
+      if (RNFS) {
+        const exists = await RNFS.exists(document.localPath);
+        if (!exists) {
+          throw PlatformUtils.createError(
+            'File no longer exists on device',
+            ['Try uploading the file again', 'Check device storage']
+          );
+        }
+      }
+    }
+
+    PlatformUtils.logDebugInfo('Processing training plan', { 
+      documentId, 
+      type: document.type,
+      platform: document.platform,
+      hasWebData: !!document.webFileData,
+      hasLocalPath: !!document.localPath
+    });
+
+    // Extract text content based on file type
+    let extractedText = '';
+    const fileType = document.type.toLowerCase();
+    
+    try {
       if (fileType.includes('word') || fileType.includes('document')) {
         extractedText = await this.extractWordText(document);
       } else if (fileType.includes('excel') || fileType.includes('sheet')) {
@@ -399,199 +467,690 @@ class DocumentProcessor {
         }
         extractedText = await this.extractPDFText(document);
       } else {
-        throw PlatformUtils.createError('Unsupported file type for processing');
-      }
-
-      if (!extractedText || extractedText.trim().length === 0) {
         throw PlatformUtils.createError(
-          'No text content could be extracted from the document',
-          ['Check if the document contains readable text', 'Try a different file format']
+          `Unsupported file type: ${document.type}`,
+          [
+            'Use supported formats: .docx, .xlsx, .csv, .txt',
+            'Convert your file to a supported format'
+          ]
         );
       }
-
-      // Process extracted text into training plan structure
-      const trainingPlan = await this.parseTrainingPlanContent(extractedText, document);
-      
-      // Save processed training plan
-      await this.saveTrainingPlan(trainingPlan);
-      
-      // Mark document as processed
-      document.processed = true;
-      document.processedAt = new Date().toISOString();
-      await this.updateDocumentMetadata(document);
-
-      PlatformUtils.logDebugInfo('Training plan processed successfully', { 
-        planId: trainingPlan.id,
-        sessionsCount: trainingPlan.sessionsCount,
-        textLength: extractedText.length
-      });
-
-      return trainingPlan;
-    } catch (error) {
-      console.error('Error processing training plan:', error);
-      throw PlatformUtils.handlePlatformError(error, 'Training Plan Processing');
+    } catch (extractionError) {
+      console.error('Text extraction failed:', extractionError);
+      throw extractionError; // Re-throw with original context
     }
+
+    if (!extractedText || extractedText.trim().length === 0) {
+      throw PlatformUtils.createError(
+        'No readable text found in the document',
+        [
+          'Check if the document contains text content',
+          'Try opening the file in its native application first',
+          'Ensure the file is not password protected'
+        ]
+      );
+    }
+
+    console.log('Text extracted successfully, length:', extractedText.length);
+
+    // Process extracted text into training plan structure
+    const trainingPlan = await this.parseTrainingPlanContent(extractedText, document);
+    
+    // Save processed training plan
+    await this.saveTrainingPlan(trainingPlan);
+    
+    // Mark document as processed
+    document.processed = true;
+    document.processedAt = new Date().toISOString();
+    await this.updateDocumentMetadata(document);
+
+    PlatformUtils.logDebugInfo('Training plan processed successfully', { 
+      planId: trainingPlan.id,
+      sessionsCount: trainingPlan.sessionsCount,
+      textLength: extractedText.length
+    });
+
+    return trainingPlan;
+  } catch (error) {
+    console.error('Error processing training plan:', error);
+    throw PlatformUtils.handlePlatformError(error, 'Training Plan Processing');
   }
+}
+
+// File Integrity Check System - Add these methods to DocumentProcessor.js
+
+// 1. Main integrity check method - call this after storeDocument
+async verifyFileIntegrity(document) {
+  try {
+    console.log('Starting file integrity check for:', document.id);
+    
+    const checks = {
+      basic: await this.performBasicIntegrityCheck(document),
+      storage: await this.performStorageIntegrityCheck(document),
+      readability: await this.performReadabilityCheck(document),
+      processing: await this.performProcessingReadinessCheck(document)
+    };
+    
+    const overallStatus = this.evaluateIntegrityResults(checks);
+    
+    const result = {
+      documentId: document.id,
+      timestamp: new Date().toISOString(),
+      platform: document.platform,
+      overallStatus,
+      checks,
+      recommendations: this.generateIntegrityRecommendations(checks)
+    };
+    
+    // Log the results
+    PlatformUtils.logDebugInfo('File integrity check completed', {
+      documentId: document.id,
+      status: overallStatus,
+      passed: overallStatus === 'passed',
+      failedChecks: Object.keys(checks).filter(key => checks[key].status === 'failed')
+    });
+    
+    return result;
+  } catch (error) {
+    console.error('File integrity check failed:', error);
+    return {
+      documentId: document.id,
+      timestamp: new Date().toISOString(),
+      overallStatus: 'error',
+      error: error.message,
+      checks: {},
+      recommendations: ['Retry file upload', 'Check file format compatibility']
+    };
+  }
+}
+
+// 2. Basic file metadata integrity
+async performBasicIntegrityCheck(document) {
+  const issues = [];
+  const warnings = [];
+  
+  try {
+    // Check required fields
+    if (!document.id) issues.push('Missing document ID');
+    if (!document.originalName) issues.push('Missing original filename');
+    if (!document.type) issues.push('Missing file type');
+    if (!document.size || document.size <= 0) issues.push('Invalid file size');
+    if (!document.uploadedAt) issues.push('Missing upload timestamp');
+    
+    // Check file type validity
+    if (document.type && !this.supportedFormats.includes(document.type)) {
+      issues.push(`Unsupported file type: ${document.type}`);
+    }
+    
+    // Check file size limits
+    if (document.size > this.fileSizeLimit) {
+      issues.push(`File too large: ${document.size} bytes (limit: ${this.fileSizeLimit})`);
+    }
+    
+    // Check filename extension matches type
+    if (document.originalName && document.type) {
+      const extensionMatch = this.validateFileExtension(document.originalName, document.type);
+      if (!extensionMatch.valid) {
+        warnings.push(extensionMatch.message);
+      }
+    }
+    
+    return {
+      status: issues.length === 0 ? 'passed' : 'failed',
+      issues,
+      warnings,
+      metadata: {
+        filename: document.originalName,
+        type: document.type,
+        size: document.size,
+        sizeFormatted: this.formatFileSize(document.size)
+      }
+    };
+  } catch (error) {
+    return {
+      status: 'error',
+      issues: [`Basic check failed: ${error.message}`],
+      warnings: [],
+      metadata: {}
+    };
+  }
+}
+
+// 3. Storage integrity check
+async performStorageIntegrityCheck(document) {
+  const issues = [];
+  const warnings = [];
+  
+  try {
+    if (PlatformUtils.isWeb()) {
+      // Web storage checks
+      if (!document.webFileData) {
+        issues.push('Web file data missing');
+      } else {
+        if (!Array.isArray(document.webFileData)) {
+          issues.push('Web file data in wrong format (should be array)');
+        } else {
+          if (document.webFileData.length === 0) {
+            issues.push('Web file data is empty');
+          } else {
+            // Verify data integrity by checking size consistency
+            const expectedSize = document.size;
+            const actualSize = document.webFileData.length;
+            
+            if (Math.abs(expectedSize - actualSize) > expectedSize * 0.1) {
+              warnings.push(`Size mismatch: expected ${expectedSize}, got ${actualSize}`);
+            }
+          }
+        }
+      }
+      
+      // Check if document can be retrieved from storage
+      const storedDocs = await this.getStoredDocuments();
+      const retrievedDoc = storedDocs.find(doc => doc.id === document.id);
+      if (!retrievedDoc) {
+        issues.push('Document not found in storage after save');
+      } else {
+        if (!retrievedDoc.webFileData) {
+          issues.push('File data lost during storage');
+        }
+      }
+      
+    } else {
+      // Mobile storage checks
+      if (!document.localPath) {
+        issues.push('Local file path missing');
+      } else {
+        if (RNFS) {
+          const exists = await RNFS.exists(document.localPath);
+          if (!exists) {
+            issues.push('File does not exist at local path');
+          } else {
+            // Check file size consistency
+            const stat = await RNFS.stat(document.localPath);
+            if (Math.abs(stat.size - document.size) > document.size * 0.1) {
+              warnings.push(`File size mismatch: expected ${document.size}, got ${stat.size}`);
+            }
+          }
+        } else {
+          warnings.push('File system not available for verification');
+        }
+      }
+    }
+    
+    return {
+      status: issues.length === 0 ? 'passed' : 'failed',
+      issues,
+      warnings,
+      platform: document.platform,
+      storageType: PlatformUtils.isWeb() ? 'webFileData' : 'localPath'
+    };
+  } catch (error) {
+    return {
+      status: 'error',
+      issues: [`Storage check failed: ${error.message}`],
+      warnings: [],
+      platform: document.platform
+    };
+  }
+}
+
+// 4. File readability check
+async performReadabilityCheck(document) {
+  const issues = [];
+  const warnings = [];
+  
+  try {
+    let canRead = false;
+    let sampleContent = '';
+    let contentLength = 0;
+    
+    // Try to read a small portion of the file to verify it's accessible
+    if (PlatformUtils.isWeb() && document.webFileData) {
+      try {
+        const buffer = new Uint8Array(document.webFileData).buffer;
+        canRead = buffer.byteLength > 0;
+        contentLength = buffer.byteLength;
+        
+        // For text files, try to read first few characters
+        if (document.type.includes('text')) {
+          const decoder = new TextDecoder('utf-8');
+          const sample = new Uint8Array(buffer.slice(0, Math.min(100, buffer.byteLength)));
+          sampleContent = decoder.decode(sample);
+        }
+      } catch (error) {
+        issues.push(`Cannot create buffer from web file data: ${error.message}`);
+      }
+    } else if (!PlatformUtils.isWeb() && document.localPath && RNFS) {
+      try {
+        const stat = await RNFS.stat(document.localPath);
+        canRead = stat.size > 0;
+        contentLength = stat.size;
+        
+        // Try to read first few bytes
+        if (document.type.includes('text')) {
+          sampleContent = await RNFS.read(document.localPath, 100, 0, 'utf8');
+        }
+      } catch (error) {
+        issues.push(`Cannot read mobile file: ${error.message}`);
+      }
+    }
+    
+    if (!canRead) {
+      issues.push('File is not readable');
+    }
+    
+    if (contentLength === 0) {
+      issues.push('File appears to be empty');
+    }
+    
+    // Check for common file corruption signs
+    if (sampleContent) {
+      if (sampleContent.includes('\uFFFD')) {
+        warnings.push('File may contain corrupted characters');
+      }
+      if (sampleContent.trim().length === 0 && contentLength > 100) {
+        warnings.push('File appears to contain only whitespace or binary data');
+      }
+    }
+    
+    return {
+      status: issues.length === 0 ? 'passed' : 'failed',
+      issues,
+      warnings,
+      readableSize: contentLength,
+      sampleLength: sampleContent.length,
+      hasSample: sampleContent.length > 0
+    };
+  } catch (error) {
+    return {
+      status: 'error',
+      issues: [`Readability check failed: ${error.message}`],
+      warnings: [],
+      readableSize: 0
+    };
+  }
+}
+
+// 5. Processing readiness check
+async performProcessingReadinessCheck(document) {
+  const issues = [];
+  const warnings = [];
+  
+  try {
+    const fileType = document.type.toLowerCase();
+    
+    // Check if we have the required libraries for this file type
+    if (fileType.includes('word') || fileType.includes('document')) {
+      if (!mammoth) {
+        issues.push('Mammoth library not available for Word processing');
+      }
+    } else if (fileType.includes('excel') || fileType.includes('sheet')) {
+      if (!XLSX) {
+        issues.push('XLSX library not available for Excel processing');
+      }
+    } else if (fileType.includes('pdf')) {
+      issues.push('PDF processing not supported');
+    }
+    
+    // Check platform-specific requirements
+    if (PlatformUtils.isWeb()) {
+      if (fileType.includes('pdf')) {
+        issues.push('PDF processing not supported on web platform');
+      }
+      if (document.size > 5 * 1024 * 1024) {
+        warnings.push('Large files may cause browser performance issues');
+      }
+    }
+    
+    // Try a quick processing test if possible
+    let processingTest = false;
+    try {
+      if (fileType.includes('text') || fileType.includes('csv')) {
+        // Simple text processing test
+        if (PlatformUtils.isWeb() && document.webFileData) {
+          const buffer = new Uint8Array(document.webFileData).buffer;
+          const decoder = new TextDecoder('utf-8');
+          const sample = decoder.decode(buffer.slice(0, 100));
+          processingTest = sample.length > 0;
+        } else if (!PlatformUtils.isWeb() && RNFS && document.localPath) {
+          const sample = await RNFS.read(document.localPath, 100, 0, 'utf8');
+          processingTest = sample.length > 0;
+        }
+      }
+    } catch (error) {
+      warnings.push(`Processing test failed: ${error.message}`);
+    }
+    
+    return {
+      status: issues.length === 0 ? 'passed' : 'failed',
+      issues,
+      warnings,
+      fileType,
+      librariesAvailable: {
+        mammoth: !!mammoth,
+        xlsx: !!XLSX
+      },
+      processingTestPassed: processingTest
+    };
+  } catch (error) {
+    return {
+      status: 'error',
+      issues: [`Processing readiness check failed: ${error.message}`],
+      warnings: [],
+      fileType: document.type
+    };
+  }
+}
+
+// 6. Helper methods
+validateFileExtension(filename, mimeType) {
+  const extensionMap = {
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+    'application/msword': ['.doc'],
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+    'application/vnd.ms-excel': ['.xls'],
+    'text/csv': ['.csv'],
+    'text/plain': ['.txt'],
+    'application/pdf': ['.pdf']
+  };
+  
+  const extension = filename.toLowerCase().substring(filename.lastIndexOf('.'));
+  const expectedExtensions = extensionMap[mimeType] || [];
+  
+  if (expectedExtensions.length === 0) {
+    return { valid: true, message: 'Unknown file type for extension validation' };
+  }
+  
+  const isValid = expectedExtensions.includes(extension);
+  return {
+    valid: isValid,
+    message: isValid ? 'Extension matches file type' : `Extension ${extension} doesn't match type ${mimeType}`
+  };
+}
+
+formatFileSize(bytes) {
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  if (bytes === 0) return '0 Bytes';
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+evaluateIntegrityResults(checks) {
+  const statuses = Object.values(checks).map(check => check.status);
+  
+  if (statuses.includes('error')) return 'error';
+  if (statuses.includes('failed')) return 'failed';
+  if (statuses.every(status => status === 'passed')) return 'passed';
+  return 'warning';
+}
+
+generateIntegrityRecommendations(checks) {
+  const recommendations = [];
+  
+  Object.entries(checks).forEach(([checkName, result]) => {
+    if (result.status === 'failed') {
+      switch (checkName) {
+        case 'basic':
+          recommendations.push('Fix file metadata issues before processing');
+          break;
+        case 'storage':
+          recommendations.push('Re-upload the file to fix storage issues');
+          break;
+        case 'readability':
+          recommendations.push('Check if file is corrupted or in wrong format');
+          break;
+        case 'processing':
+          recommendations.push('Use a different file format for better compatibility');
+          break;
+      }
+    }
+  });
+  
+  if (recommendations.length === 0) {
+    recommendations.push('File integrity verified - ready for processing');
+  }
+  
+  return recommendations;
+}
+
+// 7. Enhanced storeDocument with integrity check
+async storeDocumentWithIntegrityCheck(file) {
+  try {
+    console.log('Storing document with integrity check...');
+    
+    // Store the document first
+    const document = await this.storeDocument(file);
+    
+    // Perform integrity check
+    const integrityResult = await this.verifyFileIntegrity(document);
+    
+    // Add integrity info to document metadata
+    document.integrityCheck = {
+      timestamp: integrityResult.timestamp,
+      status: integrityResult.overallStatus,
+      lastChecked: new Date().toISOString()
+    };
+    
+    // Update document with integrity results
+    await this.updateDocumentMetadata(document);
+    
+    // Return both document and integrity results
+    return {
+      document,
+      integrityResult
+    };
+  } catch (error) {
+    throw PlatformUtils.handlePlatformError(error, 'Document Storage with Integrity Check');
+  }
+}
 
   // Enhanced text extraction with better error handling
-  async extractWordText(document) {
-    try {
-      if (!mammoth) {
+// Enhanced text extraction with better error handling and web file support
+// Fixed extractWordText method
+async extractWordText(document) {
+  try {
+    if (!mammoth) {
+      throw PlatformUtils.createError(
+        'Word processing library not available',
+        ['Install mammoth library', 'Try using a text file instead']
+      );
+    }
+
+    let buffer;
+    console.log('Starting Word text extraction for document:', document.id);
+    
+    if (PlatformUtils.isWeb()) {
+      // For web, get the stored file data
+      const documents = await this.getStoredDocuments();
+      const storedDoc = documents.find(doc => doc.id === document.id);
+      
+      if (storedDoc && storedDoc.webFileData) {
+        console.log('Found stored web file data, length:', storedDoc.webFileData.length);
+        // Convert back from stored array to ArrayBuffer
+        buffer = new Uint8Array(storedDoc.webFileData).buffer;
+        console.log('Converted to ArrayBuffer, byteLength:', buffer.byteLength);
+      } else if (document.webFileData) {
+        console.log('Using document webFileData directly');
+        buffer = new Uint8Array(document.webFileData).buffer;
+      } else {
+        console.error('No web file data found for document:', document.id);
         throw PlatformUtils.createError(
-          'Word processing library not available',
-          ['Install mammoth library', 'Try using a text file instead']
+          'File data not found - file may have been cleared from memory',
+          [
+            'Try uploading the file again',
+            'Process the file immediately after upload',
+            'Use a smaller file size'
+          ]
         );
       }
-
-      let buffer;
-      
-      if (PlatformUtils.isWeb()) {
-        if (!document.uri) {
-          throw PlatformUtils.createError('Web file not accessible');
-        }
-        const response = await fetch(document.uri);
-        if (!response.ok) {
-          throw PlatformUtils.createError('Failed to fetch file content');
-        }
-        buffer = await response.arrayBuffer();
-      } else {
-        if (!RNFS || !document.localPath) {
-          throw PlatformUtils.createError('Mobile file not accessible');
-        }
-        const base64Data = await RNFS.readFile(document.localPath, 'base64');
-        buffer = Buffer.from(base64Data, 'base64');
+    } else {
+      // Mobile file processing
+      if (!RNFS || !document.localPath) {
+        throw PlatformUtils.createError('Mobile file not accessible');
       }
-      
-      const result = await mammoth.extractRawText({ buffer });
-      
-      PlatformUtils.logDebugInfo('Word text extracted', { 
-        textLength: result.value.length,
-        hasWarnings: result.messages.length > 0
-      });
-      
-      return result.value;
-    } catch (error) {
-      throw PlatformUtils.handlePlatformError(error, 'Word Text Extraction');
+      console.log('Reading mobile file from:', document.localPath);
+      const base64Data = await RNFS.readFile(document.localPath, 'base64');
+      buffer = Buffer.from(base64Data, 'base64');
     }
-  }
-
-  async extractExcelText(document) {
-    try {
-      if (!XLSX) {
-        throw PlatformUtils.createError(
-          'Excel processing library not available',
-          ['Install xlsx library', 'Try using a CSV file instead']
-        );
-      }
-
-      let buffer;
-      
-      if (PlatformUtils.isWeb()) {
-        if (!document.uri) {
-          throw PlatformUtils.createError('Web file not accessible');
-        }
-        const response = await fetch(document.uri);
-        if (!response.ok) {
-          throw PlatformUtils.createError('Failed to fetch file content');
-        }
-        buffer = await response.arrayBuffer();
-      } else {
-        if (!RNFS || !document.localPath) {
-          throw PlatformUtils.createError('Mobile file not accessible');
-        }
-        const base64Data = await RNFS.readFile(document.localPath, 'base64');
-        buffer = Buffer.from(base64Data, 'base64');
-      }
-      
-      const workbook = XLSX.read(buffer, { 
-        type: PlatformUtils.isWeb() ? 'array' : 'buffer' 
-      });
-      
-      let extractedText = '';
-      
-      workbook.SheetNames.forEach(sheetName => {
-        const worksheet = workbook.Sheets[sheetName];
-        const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-        extractedText += `Sheet: ${sheetName}\n`;
-        data.forEach(row => {
-          const rowText = row.filter(cell => cell !== null && cell !== undefined).join(' | ');
-          if (rowText.trim()) {
-            extractedText += rowText + '\n';
-          }
-        });
-        extractedText += '\n';
-      });
-      
-      PlatformUtils.logDebugInfo('Excel text extracted', { 
-        textLength: extractedText.length,
-        sheetsCount: workbook.SheetNames.length 
-      });
-      
-      return extractedText;
-    } catch (error) {
-      throw PlatformUtils.handlePlatformError(error, 'Excel Text Extraction');
+    
+    if (!buffer || buffer.byteLength === 0) {
+      throw PlatformUtils.createError(
+        'File buffer is empty or invalid',
+        ['Check if the file is corrupted', 'Try re-uploading the file']
+      );
     }
-  }
-
-  async extractCSVText(document) {
-    try {
-      let text;
-      
-      if (PlatformUtils.isWeb()) {
-        if (!document.uri) {
-          throw PlatformUtils.createError('Web file not accessible');
-        }
-        const response = await fetch(document.uri);
-        if (!response.ok) {
-          throw PlatformUtils.createError('Failed to fetch file content');
-        }
-        text = await response.text();
-      } else {
-        if (!RNFS || !document.localPath) {
-          throw PlatformUtils.createError('Mobile file not accessible');
-        }
-        text = await RNFS.readFile(document.localPath, 'utf8');
-      }
-      
-      PlatformUtils.logDebugInfo('CSV text extracted', { 
-        textLength: text.length 
-      });
-      
-      return text;
-    } catch (error) {
-      throw PlatformUtils.handlePlatformError(error, 'CSV Text Extraction');
+    
+    console.log('Processing with mammoth, buffer size:', buffer.byteLength);
+    
+    // Use the correct mammoth API call
+    const result = await mammoth.extractRawText({ 
+      arrayBuffer: buffer 
+    });
+    
+    if (!result || !result.value) {
+      throw PlatformUtils.createError(
+        'No text could be extracted from the Word document',
+        ['Check if the document contains readable text', 'Try saving as .docx format']
+      );
     }
+    
+    PlatformUtils.logDebugInfo('Word text extracted successfully', { 
+      textLength: result.value.length,
+      hasWarnings: result.messages && result.messages.length > 0
+    });
+    
+    return result.value;
+  } catch (error) {
+    console.error('Word text extraction failed:', error);
+    throw PlatformUtils.handlePlatformError(error, 'Word Text Extraction');
   }
+}
 
-  async extractTextFile(document) {
-    try {
-      let text;
-      
-      if (PlatformUtils.isWeb()) {
-        if (!document.uri) {
-          throw PlatformUtils.createError('Web file not accessible');
-        }
-        const response = await fetch(document.uri);
-        if (!response.ok) {
-          throw PlatformUtils.createError('Failed to fetch file content');
-        }
-        text = await response.text();
-      } else {
-        if (!RNFS || !document.localPath) {
-          throw PlatformUtils.createError('Mobile file not accessible');
-        }
-        text = await RNFS.readFile(document.localPath, 'utf8');
-      }
-      
-      PlatformUtils.logDebugInfo('Text file extracted', { 
-        textLength: text.length 
-      });
-      
-      return text;
-    } catch (error) {
-      throw PlatformUtils.handlePlatformError(error, 'Text File Extraction');
+async extractExcelText(document) {
+  try {
+    if (!XLSX) {
+      throw PlatformUtils.createError(
+        'Excel processing library not available',
+        ['Install xlsx library', 'Try using a CSV file instead']
+      );
     }
+
+    let buffer;
+    
+    if (PlatformUtils.isWeb()) {
+      const documents = await this.getStoredDocuments();
+      const storedDoc = documents.find(doc => doc.id === document.id);
+      
+      if (storedDoc && storedDoc.webFileData) {
+        buffer = storedDoc.webFileData;
+      } else if (document.file) {
+        buffer = await document.file.arrayBuffer();
+      } else {
+        throw PlatformUtils.createError('Web file not accessible - file data may have been cleared');
+      }
+    } else {
+      if (!RNFS || !document.localPath) {
+        throw PlatformUtils.createError('Mobile file not accessible');
+      }
+      const base64Data = await RNFS.readFile(document.localPath, 'base64');
+      buffer = Buffer.from(base64Data, 'base64');
+    }
+    
+    const workbook = XLSX.read(buffer, { 
+      type: PlatformUtils.isWeb() ? 'array' : 'buffer' 
+    });
+    
+    let extractedText = '';
+    
+    workbook.SheetNames.forEach(sheetName => {
+      const worksheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+      extractedText += `Sheet: ${sheetName}\n`;
+      data.forEach(row => {
+        const rowText = row.filter(cell => cell !== null && cell !== undefined).join(' | ');
+        if (rowText.trim()) {
+          extractedText += rowText + '\n';
+        }
+      });
+      extractedText += '\n';
+    });
+    
+    PlatformUtils.logDebugInfo('Excel text extracted', { 
+      textLength: extractedText.length,
+      sheetsCount: workbook.SheetNames.length 
+    });
+    
+    return extractedText;
+  } catch (error) {
+    throw PlatformUtils.handlePlatformError(error, 'Excel Text Extraction');
   }
+}
+
+async extractCSVText(document) {
+  try {
+    let text;
+    
+    if (PlatformUtils.isWeb()) {
+      const documents = await this.getStoredDocuments();
+      const storedDoc = documents.find(doc => doc.id === document.id);
+      
+      if (storedDoc && storedDoc.webFileData) {
+        const decoder = new TextDecoder('utf-8');
+        text = decoder.decode(storedDoc.webFileData);
+      } else if (document.file) {
+        text = await document.file.text();
+      } else {
+        throw PlatformUtils.createError('Web file not accessible - file data may have been cleared');
+      }
+    } else {
+      if (!RNFS || !document.localPath) {
+        throw PlatformUtils.createError('Mobile file not accessible');
+      }
+      text = await RNFS.readFile(document.localPath, 'utf8');
+    }
+    
+    PlatformUtils.logDebugInfo('CSV text extracted', { 
+      textLength: text.length 
+    });
+    
+    return text;
+  } catch (error) {
+    throw PlatformUtils.handlePlatformError(error, 'CSV Text Extraction');
+  }
+}
+
+async extractTextFile(document) {
+  try {
+    let text;
+    
+    if (PlatformUtils.isWeb()) {
+      const documents = await this.getStoredDocuments();
+      const storedDoc = documents.find(doc => doc.id === document.id);
+      
+      if (storedDoc && storedDoc.webFileData) {
+        const decoder = new TextDecoder('utf-8');
+        text = decoder.decode(storedDoc.webFileData);
+      } else if (document.file) {
+        text = await document.file.text();
+      } else {
+        throw PlatformUtils.createError('Web file not accessible - file data may have been cleared');
+      }
+    } else {
+      if (!RNFS || !document.localPath) {
+        throw PlatformUtils.createError('Mobile file not accessible');
+      }
+      text = await RNFS.readFile(document.localPath, 'utf8');
+    }
+    
+    PlatformUtils.logDebugInfo('Text file extracted', { 
+      textLength: text.length 
+    });
+    
+    return text;
+  } catch (error) {
+    throw PlatformUtils.handlePlatformError(error, 'Text File Extraction');
+  }
+}
 
   // PDF extraction placeholder
   async extractPDFText(document) {
@@ -966,13 +1525,15 @@ class DocumentProcessor {
     return { name: 'Coach' };
   }
 
-  async getStoredDocuments() {
-    try {
-      const documents = await AsyncStorage.getItem('coaching_documents');
-      const parsed = documents ? JSON.parse(documents) : [];
-      
-      // Validate document structure
-      return parsed.map(doc => ({
+// Fixed getStoredDocuments method
+async getStoredDocuments() {
+  try {
+    const documents = await AsyncStorage.getItem('coaching_documents');
+    const parsed = documents ? JSON.parse(documents) : [];
+    
+    // Validate document structure and restore web file data
+    return parsed.map(doc => {
+      const processedDoc = {
         id: doc.id || `doc_${Date.now()}`,
         originalName: doc.originalName || 'Unknown Document',
         type: doc.type || 'text/plain',
@@ -983,12 +1544,30 @@ class DocumentProcessor {
         localPath: doc.localPath,
         uri: doc.uri,
         processedAt: doc.processedAt
-      }));
-    } catch (error) {
-      console.error('Error loading stored documents:', error);
-      return [];
-    }
+      };
+      
+      // Restore web file data if available
+      if (PlatformUtils.isWeb() && doc.webFileData) {
+        try {
+          // Ensure webFileData is properly restored
+          if (Array.isArray(doc.webFileData)) {
+            processedDoc.webFileData = doc.webFileData;
+            console.log('Restored web file data for document:', doc.id, 'size:', doc.webFileData.length);
+          } else {
+            console.warn('webFileData is not in expected array format for document:', doc.id);
+          }
+        } catch (error) {
+          console.warn('Could not restore web file data for document:', doc.id, error.message);
+        }
+      }
+      
+      return processedDoc;
+    });
+  } catch (error) {
+    console.error('Error loading stored documents:', error);
+    return [];
   }
+}
 
   async getTrainingPlans() {
     try {
@@ -1058,38 +1637,54 @@ class DocumentProcessor {
     }
   }
 
-  async deleteDocument(documentId) {
-    try {
-      const documents = await this.getStoredDocuments();
-      const document = documents.find(doc => doc.id === documentId);
-      
-      if (document) {
-        // Clean up platform-specific resources
-        if (PlatformUtils.isMobile() && document.localPath && RNFS) {
-          try {
-            await RNFS.unlink(document.localPath);
-          } catch (error) {
-            console.warn('Could not delete local file:', error.message);
-          }
-        } else if (PlatformUtils.isWeb() && document.uri) {
+async deleteDocument(documentId) {
+  try {
+    const documents = await this.getStoredDocuments();
+    const document = documents.find(doc => doc.id === documentId);
+    
+    if (document) {
+      // Clean up platform-specific resources
+      if (PlatformUtils.isMobile() && document.localPath && RNFS) {
+        try {
+          await RNFS.unlink(document.localPath);
+        } catch (error) {
+          console.warn('Could not delete local file:', error.message);
+        }
+      } else if (PlatformUtils.isWeb()) {
+        // Clean up web resources
+        if (document.uri && document.uri.startsWith('blob:')) {
           try {
             URL.revokeObjectURL(document.uri);
           } catch (error) {
             console.warn('Could not revoke blob URL:', error.message);
           }
         }
-        
-        const filteredDocs = documents.filter(doc => doc.id !== documentId);
-        await AsyncStorage.setItem('coaching_documents', JSON.stringify(filteredDocs));
-        
-        PlatformUtils.logDebugInfo('Document deleted', { documentId });
+        // No need to explicitly clean up webFileData - it will be garbage collected
       }
       
-      return true;
-    } catch (error) {
-      throw PlatformUtils.handlePlatformError(error, 'Document Deletion');
+      const filteredDocs = documents.filter(doc => doc.id !== documentId);
+      
+      // Convert web file data for storage
+      const docsToStore = filteredDocs.map(doc => {
+        if (PlatformUtils.isWeb() && doc.webFileData) {
+          return {
+            ...doc,
+            webFileData: Array.from(new Uint8Array(doc.webFileData))
+          };
+        }
+        return doc;
+      });
+      
+      await AsyncStorage.setItem('coaching_documents', JSON.stringify(docsToStore));
+      
+      PlatformUtils.logDebugInfo('Document deleted', { documentId });
     }
+    
+    return true;
+  } catch (error) {
+    throw PlatformUtils.handlePlatformError(error, 'Document Deletion');
   }
+}
 
   // Health check with comprehensive status
   async healthCheck() {

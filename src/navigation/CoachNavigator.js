@@ -10,6 +10,9 @@ import CoachDashboard from '../screens/coach/CoachDashboard';
 import CreateTrainingPlan from '../screens/coach/CreateTrainingPlan';
 import CoachingPlanUploadScreen from '../screens/coach/training/CoachingPlanUploadScreen';
 import PlanProcessingScreen from '../screens/coach/training/PlanProcessingScreen';
+import TrainingPlanDetails from '../screens/coach/training/TrainingPlanDetails';
+import DocumentViewer from '../screens/shared/DocumentViewer';
+import IntegratedDocumentManager from '../screens/shared/IntegratedDocumentManager';
 import SessionBuilder from '../screens/coach/SessionBuilder';
 import PlayerList from '../screens/coach/PlayerList';
 import PlayerProgress from '../screens/coach/PlayerProgress';
@@ -642,7 +645,11 @@ const DashboardStack = () => (
     <Stack.Screen 
       name="PlanProcessing" 
       component={PlanProcessingScreen} 
-      options={{ title: 'Processing Plan' }} 
+      options={{ 
+        title: 'Processing Plan',
+        headerShown: true,
+        gestureEnabled: false,
+      }} 
     />
 
     {/* Training Management */}
@@ -657,6 +664,22 @@ const DashboardStack = () => (
       options={{ title: 'Upload Coaching Plan' }} 
     />
     <Stack.Screen 
+      name="DocumentViewer" 
+      component={DocumentViewer}
+      options={({ route }) => ({ 
+        title: route.params?.document?.originalName || 'Document',
+        headerShown: false 
+      })} 
+    />
+    <Stack.Screen 
+        name="DocumentManager" 
+        component={IntegratedDocumentManager} 
+        options={{ 
+          title: 'Training Documents',
+          headerShown: true
+        }} 
+      />
+    <Stack.Screen 
       name="SessionBuilder" 
       component={SessionBuilder} 
       options={{ title: 'Session Builder' }} 
@@ -665,6 +688,14 @@ const DashboardStack = () => (
       name="TrainingPlanLibrary" 
       component={TrainingPlanLibrary}
       options={{ title: 'Training Plan Library' }} 
+    />
+    <Stack.Screen 
+      name="TrainingPlanDetails" 
+      component={TrainingPlanDetails}
+      options={{ 
+        title: 'Training Plan',
+        headerShown: false // The component has its own header
+      }} 
     />
     <Stack.Screen 
       name="SessionTemplates" 
@@ -774,10 +805,37 @@ const TrainingStack = () => (
       options={{ title: 'Upload Coaching Plan' }} 
     />
     <Stack.Screen 
+        name="DocumentViewer" 
+        component={DocumentViewer}
+        options={({ route }) => ({ 
+          title: route.params?.document?.originalName || 'Document',
+          headerShown: false // Since DocumentViewer has its own header
+        })} 
+      />
+      <Stack.Screen 
+        name="DocumentManager" 
+        component={IntegratedDocumentManager} 
+        options={{ 
+          title: 'Training Documents',
+          headerShown: true
+        }} 
+      />
+    <Stack.Screen 
       name="TrainingPlanLibrary" 
       component={TrainingPlanLibrary}
-      options={{ title: 'Training Plan Library' }} 
+      options={{ 
+        title: 'Training Plan Library',
+        headerShown: true
+      }} 
     />
+    <Stack.Screen 
+        name="TrainingPlanDetails" 
+        component={TrainingPlanDetails}
+        options={{ 
+          title: 'Training Plan',
+          headerShown: false // The component has its own header
+        }} 
+      />
     <Stack.Screen 
       name="SessionBuilder" 
       component={SessionBuilder} 
@@ -839,6 +897,15 @@ const TrainingStack = () => (
       name="AssignmentManager" 
       component={AssignmentManager}
       options={{ title: 'Assignments' }} 
+    />
+    <Stack.Screen 
+      name="PlanProcessing" 
+      component={PlanProcessingScreen} 
+      options={{ 
+        title: 'Processing Plan',
+        headerShown: true,
+        gestureEnabled: false, // Prevent gesture-based back navigation during processing
+      }} 
     />
     
     {/* Performance & Analytics */}

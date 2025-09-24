@@ -33,7 +33,21 @@ class PlatformUtils {
           'table-chart': '📈',
           'insert-drive-file': '📄',
           'arrow-right': '→',
-          'upload': '⬆️'
+          'upload': '⬆️',
+          'verified': '✓',
+          'warning': '⚠️',
+          'error': '❌',
+          'help-outline': '❓',
+          'security': '🔒',
+          'refresh': '🔄',
+          'delete': '🗑️',
+          'delete-outline': '🗑️',
+          'check-circle': '✅',
+          'info': 'ℹ️',
+          'favorite': '❤️',
+          'favorite-border': '🤍',
+          'push-pin': '📌',
+          'outline': '⭕'
         };
         
         return React.createElement('span', {
@@ -41,6 +55,8 @@ class PlatformUtils {
             fontSize: size,
             color: color,
             fontFamily: 'monospace',
+            display: 'inline-block',
+            textAlign: 'center',
             ...style
           },
           ...props
@@ -243,15 +259,50 @@ class PlatformUtils {
     return baseFormats;
   }
 
-  // Show platform-appropriate error messages
-  static getErrorMessage(error, context = '') {
-    const baseMessage = error.message || 'An error occurred';
+  // Enhanced error creation with platform context and integrity check support
+  static createError(message, suggestions = [], errorType = 'general', metadata = {}) {
+    const platformSuggestions = this.isWeb() 
+      ? [
+          'Try using Chrome or Firefox for better compatibility',
+          'Ensure file size is under 5MB for web uploads',
+          'Use Word (.docx) or Excel (.xlsx) formats for best results',
+          ...suggestions
+        ]
+      : [
+          'Check device storage space',
+          'Ensure app has storage permissions',
+          'Try restarting the app if issues persist',
+          ...suggestions
+        ];
+
+    const error = new Error(message);
+    error.suggestions = platformSuggestions;
+    error.platform = this.isWeb() ? 'web' : 'mobile';
+    error.errorType = errorType;
+    error.timestamp = new Date().toISOString();
+    error.metadata = {
+      platform: Platform.OS,
+      ...metadata
+    };
     
-    if (this.isWeb()) {
-      return `Web Platform ${context}: ${baseMessage}`;
-    } else {
-      return `Mobile Platform ${context}: ${baseMessage}`;
+    return error;
+  }
+
+  // Show platform-appropriate error messages with better categorization
+  static getErrorMessage(error, context = '', includeMetadata = false) {
+    const baseMessage = error.message || 'An error occurred';
+    const platformContext = this.isWeb() ? 'Web' : 'Mobile';
+    
+    let message = `[${platformContext}] ${context}: ${baseMessage}`;
+    
+    if (includeMetadata && error.metadata) {
+      message += `\nPlatform: ${error.metadata.platform}`;
+      if (error.timestamp) {
+        message += `\nTimestamp: ${new Date(error.timestamp).toLocaleString()}`;
+      }
     }
+    
+    return message;
   }
 
   // Platform-specific storage paths
@@ -274,7 +325,10 @@ class PlatformUtils {
       nativeFilePicker: false,
       backgroundProcessing: false,
       vectorIcons: false, // Use fallback icons
-      gradients: true // CSS gradients available
+      gradients: true, // CSS gradients available
+      integrityChecking: true, // Browser-based integrity checks
+      fileRepair: false, // Limited repair capabilities on web
+      batchProcessing: true
     };
 
     const mobileSupported = {
@@ -287,7 +341,10 @@ class PlatformUtils {
       nativeFilePicker: true,
       backgroundProcessing: true,
       vectorIcons: true,
-      gradients: true
+      gradients: true,
+      integrityChecking: true,
+      fileRepair: true,
+      batchProcessing: true
     };
 
     if (this.isWeb()) {
@@ -304,13 +361,19 @@ class PlatformUtils {
         fileSelection: 'Opening file browser...',
         processing: 'Processing document in browser...',
         saving: 'Saving to browser storage...',
-        loading: 'Loading from browser storage...'
+        loading: 'Loading from browser storage...',
+        integrityCheck: 'Verifying file integrity...',
+        repair: 'Attempting to repair file...',
+        batch: 'Processing multiple files...'
       },
       mobile: {
         fileSelection: 'Opening native file picker...',
         processing: 'Processing document...',
         saving: 'Saving to device storage...',
-        loading: 'Loading from device storage...'
+        loading: 'Loading from device storage...',
+        integrityCheck: 'Running integrity checks...',
+        repair: 'Repairing file integrity...',
+        batch: 'Batch processing documents...'
       }
     };
 
@@ -321,13 +384,35 @@ class PlatformUtils {
   // Handle platform-specific permissions
   static async checkPermissions() {
     if (this.isWeb()) {
-      return { granted: true, message: 'Web file access available' };
+      // Check if File API and other web APIs are available
+      const hasFileAPI = typeof File !== 'undefined' && typeof FileReader !== 'undefined';
+      const hasArrayBuffer = typeof ArrayBuffer !== 'undefined';
+      const hasBlob = typeof Blob !== 'undefined';
+      
+      return {
+        granted: hasFileAPI && hasArrayBuffer && hasBlob,
+        message: hasFileAPI ? 'Web file APIs available' : 'Web file APIs not supported',
+        details: {
+          fileAPI: hasFileAPI,
+          arrayBuffer: hasArrayBuffer,
+          blob: hasBlob
+        }
+      };
     }
     
     try {
-      return { granted: true, message: 'Storage permissions granted' };
+      // On mobile, we assume permissions are handled by the libraries
+      return { 
+        granted: true, 
+        message: 'Storage permissions assumed granted',
+        details: { platform: 'mobile' }
+      };
     } catch (error) {
-      return { granted: false, message: 'Storage permissions required' };
+      return { 
+        granted: false, 
+        message: 'Storage permissions required',
+        error: error.message
+      };
     }
   }
 
@@ -338,61 +423,71 @@ class PlatformUtils {
     return '.pdf,.docx,.xlsx,.xls,.csv,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/plain';
   }
 
-  // Create platform-appropriate error with suggestions
-  static createError(message, suggestions = []) {
-    const platformSuggestions = this.isWeb() 
-      ? [
-          'Try using Chrome or Firefox for better compatibility',
-          'Ensure file size is under 5MB for web uploads',
-          'Use Word (.docx) or Excel (.xlsx) formats for best results',
-          ...suggestions
-        ]
-      : [
-          'Check device storage space',
-          'Ensure app has storage permissions',
-          'Try restarting the app if issues persist',
-          ...suggestions
-        ];
-
-    const error = new Error(message);
-    error.suggestions = platformSuggestions;
-    error.platform = this.isWeb() ? 'web' : 'mobile';
-    
-    return error;
-  }
-
-  // Log platform-specific debug info
+  // Log platform-specific debug info with enhanced metadata
   static logDebugInfo(context, data = {}) {
     if (__DEV__) {
-      console.log(`[${this.isWeb() ? 'WEB' : 'MOBILE'}] ${context}:`, {
+      const logData = {
         platform: Platform.OS,
-        ...data,
-        timestamp: new Date().toISOString()
-      });
+        timestamp: new Date().toISOString(),
+        context,
+        ...data
+      };
+      
+      // Add platform-specific metadata
+      if (this.isWeb()) {
+        logData.userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown';
+        logData.webAPI = {
+          fileAPI: typeof File !== 'undefined',
+          arrayBuffer: typeof ArrayBuffer !== 'undefined',
+          blob: typeof Blob !== 'undefined'
+        };
+      }
+      
+      console.log(`[${this.isWeb() ? 'WEB' : 'MOBILE'}] ${context}:`, logData);
     }
   }
 
-  // Helper method to safely execute platform-specific code
-  static async executePlatformSpecific(webFn, mobileFn, fallback = null) {
+  // Helper method to safely execute platform-specific code with error handling
+  static async executePlatformSpecific(webFn, mobileFn, fallback = null, timeout = 10000) {
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Platform operation timeout')), timeout)
+    );
+    
     try {
-      if (this.isWeb() && webFn) {
-        return await webFn();
-      } else if (this.isMobile() && mobileFn) {
-        return await mobileFn();
+      const operation = this.isWeb() && webFn 
+        ? webFn()
+        : this.isMobile() && mobileFn 
+        ? mobileFn()
+        : fallback;
+        
+      if (operation && typeof operation.then === 'function') {
+        return await Promise.race([operation, timeoutPromise]);
       }
-      return fallback;
+      
+      return operation;
     } catch (error) {
       console.warn('Platform-specific execution failed:', error.message);
+      
+      if (error.message.includes('timeout')) {
+        throw this.createError(
+          'Operation timed out',
+          ['Try again with a smaller file', 'Check your connection'],
+          'timeout'
+        );
+      }
+      
       return fallback;
     }
   }
 
-  // Enhanced module availability check
+  // Enhanced module availability check with integrity status
   static checkModuleAvailability() {
     const availability = {
       platform: Platform.OS,
+      timestamp: new Date().toISOString(),
       modules: {},
-      components: {}
+      components: {},
+      integritySupport: {}
     };
 
     // Check native modules
@@ -463,6 +558,17 @@ class PlatformUtils {
       }
     };
 
+    // Check integrity support capabilities
+    availability.integritySupport = {
+      basicChecks: true,
+      storageVerification: true,
+      readabilityTests: true,
+      processingReadiness: true,
+      fileRepair: this.isFeatureSupported('fileRepair'),
+      batchProcessing: this.isFeatureSupported('batchProcessing'),
+      realTimeValidation: this.isWeb() // Real-time validation works better on web
+    };
+
     // Check each module
     Object.keys(moduleCheckers).forEach(moduleName => {
       availability.modules[moduleName] = moduleCheckers[moduleName]();
@@ -494,13 +600,15 @@ class PlatformUtils {
     }
   }
 
-  // Initialize all platform-specific components and modules
+  // Initialize all platform-specific components and modules with integrity support
   static async initializePlatform() {
     const results = {
       platform: Platform.OS,
+      timestamp: new Date().toISOString(),
       initialized: {
         components: {},
-        modules: {}
+        modules: {},
+        integrityChecks: {}
       },
       errors: []
     };
@@ -523,6 +631,21 @@ class PlatformUtils {
       results.errors.push(`Module initialization failed: ${error.message}`);
     }
 
+    // Initialize integrity check capabilities
+    try {
+      const permissions = await this.checkPermissions();
+      results.initialized.integrityChecks = {
+        permissionsGranted: permissions.granted,
+        basicChecksEnabled: true,
+        storageVerificationEnabled: true,
+        readabilityTestsEnabled: true,
+        repairCapabilitiesEnabled: this.isFeatureSupported('fileRepair'),
+        batchProcessingEnabled: this.isFeatureSupported('batchProcessing')
+      };
+    } catch (error) {
+      results.errors.push(`Integrity checks initialization failed: ${error.message}`);
+    }
+
     this.logDebugInfo('Platform initialized', results);
     return results;
   }
@@ -536,7 +659,8 @@ class PlatformUtils {
         elevation: undefined, // Use boxShadow instead
         // Add web-specific styles
         boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-        cursor: 'pointer'
+        cursor: 'pointer',
+        userSelect: 'none'
       };
     } else {
       return {
@@ -549,13 +673,14 @@ class PlatformUtils {
     }
   }
 
-  // Enhanced error handling with platform context
-  static handlePlatformError(error, context = '') {
+  // Enhanced error handling with platform context and integrity check support
+  static handlePlatformError(error, context = '', includeIntegrityInfo = false) {
     const platformContext = this.isWeb() ? 'Web' : 'Mobile';
-    const errorMessage = `[${platformContext}] ${context}: ${error.message}`;
+    let errorMessage = `[${platformContext}] ${context}: ${error.message}`;
     
     console.error(errorMessage, error);
     
+    // Handle specific error types
     if (error.message.includes('requireNativeComponent')) {
       return this.createError(
         'Native component not available on this platform',
@@ -563,11 +688,90 @@ class PlatformUtils {
           'This feature requires native mobile components',
           'Try using the mobile app for full functionality',
           'Some features are limited on web platform'
-        ]
+        ],
+        'platform_incompatibility'
       );
     }
     
-    return this.createError(errorMessage);
+    if (error.message.includes('Could not find file')) {
+      return this.createError(
+        'File data not accessible',
+        [
+          'File may have been cleared from memory',
+          'Try uploading the file again',
+          'Process files immediately after upload for better reliability'
+        ],
+        'file_access_error',
+        { originalError: error.message, context }
+      );
+    }
+    
+    if (error.message.includes('arrayBuffer') || error.message.includes('buffer')) {
+      return this.createError(
+        'File processing error - invalid file data',
+        [
+          'File may be corrupted or in an unsupported format',
+          'Try re-saving the file in the native application',
+          'Ensure the file is not password protected'
+        ],
+        'file_processing_error',
+        { originalError: error.message, context }
+      );
+    }
+    
+    if (error.message.includes('timeout')) {
+      return this.createError(
+        'Operation timed out',
+        [
+          'Try again with a smaller file',
+          'Check your internet connection',
+          'Close other applications to free up resources'
+        ],
+        'timeout_error',
+        { originalError: error.message, context }
+      );
+    }
+    
+    // Include integrity information if requested
+    if (includeIntegrityInfo) {
+      const integritySupport = this.checkModuleAvailability().integritySupport;
+      errorMessage += `\nIntegrity Support: ${JSON.stringify(integritySupport)}`;
+    }
+    
+    return this.createError(errorMessage, [], 'general_error', {
+      originalError: error.message,
+      context,
+      platform: platformContext
+    });
+  }
+
+  // Validate file integrity requirements for platform
+  static validateIntegrityRequirements(fileData) {
+    const requirements = {
+      valid: true,
+      errors: [],
+      warnings: []
+    };
+    
+    // Platform-specific validations
+    if (this.isWeb()) {
+      if (!fileData.file && !fileData.webFileData) {
+        requirements.valid = false;
+        requirements.errors.push('No web file data available for integrity checking');
+      }
+      
+      if (fileData.size > this.getFileSizeLimit()) {
+        requirements.valid = false;
+        requirements.errors.push('File too large for web platform integrity checking');
+      }
+    } else {
+      if (!fileData.localPath) {
+        requirements.valid = false;
+        requirements.errors.push('No local file path available for integrity checking');
+      }
+    }
+    
+    return requirements;
   }
 }
 
