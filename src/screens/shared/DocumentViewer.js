@@ -48,11 +48,69 @@ import { TEXT_STYLES } from '../../styles/textStyles';
 import DocumentProcessor from '../../services/DocumentProcessor';
 import PlatformUtils from '../../utils/PlatformUtils';
 import AnalyticsService from '../../services/AnalyticsService';
-
+import DocumentLibrary from './DocumentLibrary';
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 const DocumentViewer = ({ navigation, route }) => {
-  const { document, planTitle } = route.params;
+  const routeParams = route?.params || {};
+  const { document, planTitle } = routeParams;
+  
+  // Early return with error if required document is missing
+// Early return with error if required document is missing and not showing all documents
+if (!document && !routeParams.showAllDocuments) {
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.primary} translucent />
+      
+      <View style={styles.headerContainer}>
+        <LinearGradient
+          colors={['#667eea', '#764ba2']}
+          style={styles.header}
+        >
+          <View style={styles.headerContent}>
+            <IconButton
+              icon="arrow-back"
+              iconColor="white"
+              size={24}
+              onPress={() => navigation.goBack()}
+            />
+            <View style={styles.headerInfo}>
+              <Text style={[TEXT_STYLES.h3, styles.headerTitle]}>
+                Document Viewer
+              </Text>
+            </View>
+          </View>
+        </LinearGradient>
+      </View>
+      
+      <View style={styles.errorContainer}>
+        <Icon name="error" size={64} color={COLORS.error} />
+        <Text style={[TEXT_STYLES.h3, styles.errorTitle]}>
+          Document Not Found
+        </Text>
+        <Text style={[TEXT_STYLES.body1, styles.errorMessage]}>
+          No document was provided to display. Please go back and select a document to view.
+        </Text>
+        <Button
+          mode="contained"
+          onPress={() => navigation.goBack()}
+          style={styles.retryButton}
+          icon="arrow-back"
+        >
+          Go Back
+        </Button>
+      </View>
+    </View>
+  );
+}
+
+// If showAllDocuments is true, show document library view
+useEffect(() => {
+  if (routeParams.showAllDocuments) {
+    navigation.replace('DocumentLibrary');
+    return;
+  }
+}, [routeParams.showAllDocuments, navigation]);
   
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -473,16 +531,20 @@ const DocumentViewer = ({ navigation, route }) => {
   };
 
   const loadWebDocument = async () => {
-    try {
-      const documents = await DocumentProcessor.getStoredDocuments();
-      const storedDoc = documents.find(doc => doc.id === document.id);
-      
-      if (!storedDoc || !storedDoc.webFileData) {
-        throw new Error('Document data not found in web storage');
-      }
+  try {
+    const documents = await DocumentProcessor.getStoredDocuments();
+    const storedDoc = documents.find(doc => doc.id === document.id);
+    
+    if (!storedDoc) {
+      throw new Error('Document not found in storage');
+    }
 
-      setProcessingProgress(0.6);
+    console.log('Found stored document:', storedDoc.id, 'has webFileData:', !!storedDoc.webFileData);
+    
+    setProcessingProgress(0.6);
 
+    // Check if we have web file data
+    if (storedDoc.webFileData && Array.isArray(storedDoc.webFileData)) {
       const uint8Array = new Uint8Array(storedDoc.webFileData);
       
       if (['text', 'csv'].includes(fileType)) {
@@ -496,13 +558,35 @@ const DocumentViewer = ({ navigation, route }) => {
         setDocumentUrl(url);
         setViewMode('web');
       }
-
+      
       setProcessingProgress(0.9);
-    } catch (error) {
-      console.error('Web document loading error:', error);
-      throw error;
+    } else {
+      // Fallback: try to use the original document object if it has file data
+      console.log('No webFileData found, checking original document object');
+      
+      if (document.file) {
+        console.log('Found file object in document');
+        
+        if (['text', 'csv'].includes(fileType)) {
+          const content = await document.file.text();
+          setDocumentContent(content);
+          setViewMode('text');
+        } else {
+          const url = URL.createObjectURL(document.file);
+          setDocumentUrl(url);
+          setViewMode('web');
+        }
+        
+        setProcessingProgress(0.9);
+      } else {
+        throw new Error('No file data available for this document. Try re-uploading the file.');
+      }
     }
-  };
+  } catch (error) {
+    console.error('Web document loading error:', error);
+    throw error;
+  }
+};
 
   const loadMobileDocument = async () => {
     try {
@@ -1115,34 +1199,52 @@ const DocumentViewer = ({ navigation, route }) => {
             Document Settings
           </Text>
           
-          {/* Font Size */}
+         {/* Font Size */}
           <View style={styles.settingGroup}>
             <Text style={styles.settingLabel}>Font Size: {fontSize}px</Text>
-            <Slider
-              style={styles.slider}
-              minimumValue={12}
-              maximumValue={24}
-              value={fontSize}
-              onValueChange={setFontSize}
-              step={1}
-              thumbStyle={{ backgroundColor: COLORS.primary }}
-              trackStyle={{ backgroundColor: COLORS.primary + '30' }}
-            />
+            <View style={styles.buttonGroup}>
+              <Button
+                mode="outlined"
+                compact
+                onPress={() => setFontSize(Math.max(12, fontSize - 2))}
+                style={styles.adjustButton}
+              >
+                -
+              </Button>
+              <Text style={styles.valueDisplay}>{fontSize}px</Text>
+              <Button
+                mode="outlined"
+                compact
+                onPress={() => setFontSize(Math.min(24, fontSize + 2))}
+                style={styles.adjustButton}
+              >
+                +
+              </Button>
+            </View>
           </View>
 
           {/* Line Spacing */}
           <View style={styles.settingGroup}>
-            <Text style={styles.settingLabel}>Line Spacing: {lineSpacing}x</Text>
-            <Slider
-              style={styles.slider}
-              minimumValue={1.0}
-              maximumValue={3.0}
-              value={lineSpacing}
-              onValueChange={setLineSpacing}
-              step={0.1}
-              thumbStyle={{ backgroundColor: COLORS.primary }}
-              trackStyle={{ backgroundColor: COLORS.primary + '30' }}
-            />
+            <Text style={styles.settingLabel}>Line Spacing: {lineSpacing.toFixed(1)}x</Text>
+            <View style={styles.buttonGroup}>
+              <Button
+                mode="outlined"
+                compact
+                onPress={() => setLineSpacing(Math.max(1.0, lineSpacing - 0.1))}
+                style={styles.adjustButton}
+              >
+                -
+              </Button>
+              <Text style={styles.valueDisplay}>{lineSpacing.toFixed(1)}x</Text>
+              <Button
+                mode="outlined"
+                compact
+                onPress={() => setLineSpacing(Math.min(3.0, lineSpacing + 0.1))}
+                style={styles.adjustButton}
+              >
+                +
+              </Button>
+            </View>
           </View>
 
           {/* Toggle Settings */}
@@ -1450,6 +1552,7 @@ const DocumentViewer = ({ navigation, route }) => {
     </View>
   );
 };
+
 
 // StyleSheet with comprehensive styles
 const styles = {
@@ -1891,7 +1994,42 @@ const styles = {
   snackbarText: {
     color: 'white',
   },
+  buttonGroup: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  marginTop: 8,
+},
+adjustButton: {
+  minWidth: 40,
+  marginHorizontal: 8,
+},
+valueDisplay: {
+  fontSize: 16,
+  fontWeight: 'bold',
+  minWidth: 60,
+  textAlign: 'center',
+},
+settingGroup: {
+  marginBottom: 20,
+},
+settingLabel: {
+  fontSize: 16,
+  marginBottom: 8,
+},
+toggleGroup: {
+  marginBottom: 20,
+},
+toggleItem: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  marginBottom: 12,
+  paddingVertical: 8,
+},
+toggleLabel: {
+  fontSize: 16,
+},
 };
 
-// CRITICAL FIX: Add the default export
 export default DocumentViewer;

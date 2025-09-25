@@ -20,7 +20,7 @@ export const initializeFirebaseApp = async () => {
         // Try to sync any pending offline registrations
         setTimeout(async () => {
           try {
-            console.log('🔄 Checking for offline registrations to sync...');
+            //console.log('🔄 Checking for offline registrations to sync...');
             const syncResult = await FirebaseService.syncOfflineRegistrationsToFirebase();
             if (syncResult.success && syncResult.syncedCount > 0) {
               console.log(`✅ Synced ${syncResult.syncedCount} offline registrations`);

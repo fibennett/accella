@@ -39,7 +39,6 @@ import { TEXT_STYLES } from '../../../styles/textStyles';
 import DocumentProcessor from '../../../services/DocumentProcessor';
 import DocumentViewer from '../../shared/DocumentViewer';
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
-
 const TrainingPlanDetails = ({ navigation, route }) => {
   const { planId } = route.params;
   
@@ -62,8 +61,10 @@ const TrainingPlanDetails = ({ navigation, route }) => {
   const [documentModalVisible, setDocumentModalVisible] = useState(false);
   const [documentUploadModalVisible, setDocumentUploadModalVisible] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState(null);
+  const [sourceDocument, setSourceDocument] = useState(null);
   const [allDocuments, setAllDocuments] = useState([]);
   const [loadingDocs, setLoadingDocs] = useState(true);
+
   // Difficulty colors mapping
   const difficultyColors = {
     beginner: COLORS.success,
@@ -74,12 +75,40 @@ const TrainingPlanDetails = ({ navigation, route }) => {
   // Tab options
 const tabs = [
   { key: 'overview', label: 'Overview', icon: 'info' },
-  { key: 'documents', label: 'Documents', icon: 'description' }, // NEW TAB
   { key: 'sessions', label: 'Sessions', icon: 'fitness-center' },
+  { key: 'documents', label: 'Documents', icon: 'description' },
+  { key: 'favorites', label: 'Favorites', icon: 'favorite' },
   { key: 'progress', label: 'Progress', icon: 'trending-up' },
   { key: 'nutrition', label: 'Nutrition', icon: 'restaurant' },
   { key: 'analytics', label: 'Analytics', icon: 'analytics' },
 ];
+
+const loadAllDocuments = async () => {
+  try {
+    setLoadingDocs(true);
+    const docs = await DocumentProcessor.getStoredDocuments();
+    setAllDocuments(docs);
+  } catch (error) {
+    console.error('Error loading documents:', error);
+    Alert.alert('Error', 'Failed to load documents');
+  } finally {
+    setLoadingDocs(false);
+  }
+};
+
+const refreshDocuments = async () => {
+  if (activeTab === 'documents') {
+    await loadAllDocuments();
+  }
+};
+
+// Load all documents from DocumentProcessor
+// Update the existing useEffect to use the extracted function
+useEffect(() => {
+  if (activeTab === 'documents') {
+    loadAllDocuments();
+  }
+}, [activeTab]);
 
   // Load plan data
   useEffect(() => {
@@ -109,24 +138,27 @@ const tabs = [
     }
   }, [plan]);
 
-  // Load all documents from DocumentProcessor
-    useEffect(() => {
-      const loadAllDocuments = async () => {
-        try {
-          const docs = await DocumentProcessor.getStoredDocuments();
-          setAllDocuments(docs);
-        } catch (error) {
-          console.error('Error loading documents:', error);
-          Alert.alert('Error', 'Failed to load documents');
-        } finally {
-          setLoadingDocs(false);
-        }
-      };
-
-      if (activeTab === 'documents') {
-        loadAllDocuments();
-      }
-    }, [activeTab]);
+  // In TrainingPlanDetails.js, add this helper function:
+const getCreatorInitials = (plan) => {
+  const firstName = plan?.creatorFirstName || plan?.creator?.split(' ')[0] || '';
+  const lastName = plan?.creatorLastName || plan?.creator?.split(' ')[1] || '';
+  
+  const firstInitial = firstName.charAt(0).toUpperCase();
+  const lastInitial = lastName.charAt(0).toUpperCase();
+  
+  // If we have both initials, use them
+  if (firstInitial && lastInitial) {
+    return firstInitial + lastInitial;
+  }
+  
+  // If we only have username, use first two characters
+  const username = plan?.creatorUsername || plan?.creator || 'Coach';
+  if (username.length >= 2) {
+    return username.substring(0, 2).toUpperCase();
+  }
+  
+  return 'CR'; // Coach as default
+};
 
   const loadPlanDetails = async () => {
     try {
@@ -147,6 +179,41 @@ const tabs = [
       setLoading(false);
     }
   };
+
+  const renderDocumentInfoSection = () => {
+  if (!sourceDocument) return null;
+
+  return (
+    <Surface style={styles.documentInfoSection}>
+      <View style={styles.documentInfoContainer}>
+        <View style={styles.documentInfoHeader}>
+          <Icon name="description" size={20} color={COLORS.primary} />
+          <Text style={[TEXT_STYLES.subtitle2, { marginLeft: SPACING.sm, color: COLORS.textSecondary }]}>
+            Source Document
+          </Text>
+        </View>
+        <TouchableOpacity 
+          style={styles.documentInfoContent}
+          onPress={() => navigation.navigate('DocumentViewer', { 
+            document: sourceDocument,
+            planTitle: plan.title 
+          })}
+          activeOpacity={0.7}
+        >
+          <View style={styles.documentNameContainer}>
+            <Text style={[TEXT_STYLES.body1, { fontWeight: '600', color: COLORS.textPrimary }]}>
+              {sourceDocument.originalName}
+            </Text>
+            <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary, marginTop: 2 }]}>
+              {getDocumentTypeLabel(sourceDocument)} • {formatFileSize(sourceDocument.size)} • {new Date(sourceDocument.uploadedAt).toLocaleDateString()}
+            </Text>
+          </View>
+          <Icon name="arrow-forward" size={18} color={COLORS.textSecondary} />
+        </TouchableOpacity>
+      </View>
+    </Surface>
+  );
+};
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -199,12 +266,93 @@ const tabs = [
     }));
   };
 
+  const handleFavoriteDocument = async (document) => {
+  try {
+    const updatedDoc = {
+      ...document,
+      isFavorite: !document.isFavorite,
+      favoritedAt: !document.isFavorite ? new Date().toISOString() : null
+    };
+    
+    await DocumentProcessor.updateDocumentMetadata(updatedDoc);
+    await loadAllDocuments();
+    setSnackbarMessage(document.isFavorite ? 'Removed from favorites' : 'Added to favorites');
+    setSnackbarVisible(true);
+  } catch (error) {
+    Alert.alert('Favorite Error', `Could not update favorite status: ${error.message}`);
+  }
+};
+
+const handlePinDocument = async (document) => {
+  try {
+    if (!document.isPinned) {
+      const pinnedCount = allDocuments.filter(doc => doc.isPinned).length;
+      if (pinnedCount >= 7) {
+        Alert.alert(
+          'Pin Limit Reached',
+          'You can only pin up to 7 documents. Unpin another document first.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+    }
+
+    const updatedDoc = {
+      ...document,
+      isPinned: !document.isPinned,
+      pinnedAt: !document.isPinned ? new Date().toISOString() : null
+    };
+    
+    await DocumentProcessor.updateDocumentMetadata(updatedDoc);
+    await loadAllDocuments();
+    setSnackbarMessage(document.isPinned ? 'Document unpinned' : 'Document pinned to top');
+    setSnackbarVisible(true);
+  } catch (error) {
+    Alert.alert('Pin Error', `Could not pin document: ${error.message}`);
+  }
+};
+
+const handleDeleteDocument = async (document) => {
+  if (document.isPinned) {
+    Alert.alert(
+      'Cannot Delete Pinned Document',
+      'This document is pinned and protected from deletion. Unpin it first to delete.',
+      [{ text: 'OK' }]
+    );
+    return;
+  }
+
+  Alert.alert(
+    'Delete Document',
+    `Are you sure you want to delete "${document.originalName}"? This action cannot be undone.`,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await DocumentProcessor.deleteDocument(document.id);
+            await loadAllDocuments();
+            setSnackbarMessage('Document deleted successfully');
+            setSnackbarVisible(true);
+          } catch (error) {
+            Alert.alert('Delete Failed', 'Could not delete document. Please try again.');
+          }
+        }
+      }
+    ]
+  );
+};
+
 const renderTabContent = () => {
   switch (activeTab) {
     case 'overview':
       return renderOverview();
     case 'documents':
       return renderDocuments();
+    case 'favorites':
+      return renderFavorites();
     case 'sessions':
       return renderSessions();
     case 'progress':
@@ -263,6 +411,48 @@ const getDocumentTypeLabel = (document) => {
   return 'Document';
 };
 
+const loadSourceDocument = async () => {
+  try {
+    if (plan && plan.sourceDocument) {
+      const documents = await DocumentProcessor.getStoredDocuments();
+      const foundDoc = documents.find(doc => doc.id === plan.sourceDocument);
+      setSourceDocument(foundDoc);
+    }
+  } catch (error) {
+    console.error('Error loading source document:', error);
+  }
+};
+
+// Add this useEffect for more comprehensive navigation handling
+useEffect(() => {
+  const unsubscribe = navigation.addListener('focus', () => {
+    // Always refresh documents when coming back to this screen
+    if (activeTab === 'documents' && !loading) {
+      loadAllDocuments();
+    }
+  });
+
+  // Also listen for state changes from child screens
+  const beforeRemoveListener = navigation.addListener('beforeRemove', (e) => {
+    // Refresh documents when navigation is about to change
+    if (activeTab === 'documents') {
+      loadAllDocuments();
+    }
+  });
+
+  return () => {
+    unsubscribe();
+    beforeRemoveListener();
+  };
+}, [navigation, activeTab, loading]);
+
+// Add this useEffect to load document when plan changes:
+useEffect(() => {
+  if (plan) {
+    loadSourceDocument();
+  }
+}, [plan]);
+
 const formatFileSize = (bytes) => {
   if (bytes === 0) return '0 Bytes';
   const k = 1024;
@@ -271,10 +461,22 @@ const formatFileSize = (bytes) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
-// 7. NEW: Add document handler functions
 const handleDocumentPress = (document) => {
+  // Ensure we pass the complete document object with all necessary data
+  const documentForViewer = {
+    ...document,
+    // Make sure we have all required fields
+    id: document.id,
+    originalName: document.originalName,
+    type: document.type,
+    size: document.size,
+    uploadedAt: document.uploadedAt,
+    webFileData: document.webFileData,
+    file: document.file // Include original file object if available
+  };
+  
   navigation.navigate('DocumentViewer', {
-    document: document,
+    document: documentForViewer,
     planTitle: plan.title
   });
 };
@@ -316,10 +518,9 @@ const handleDocumentUpload = async () => {
     setSnackbarMessage(`Document "${result.document.originalName}" uploaded successfully!`);
     setSnackbarVisible(true);
     
-    // Reload documents if we're on the documents tab
-    if (activeTab === 'documents') {
-      loadPlanDetails(); // This will trigger a refresh of the documents
-    }
+    // Reload documents immediately after upload
+    await loadAllDocuments();
+    
   } catch (error) {
     console.error('Document upload failed:', error);
     Alert.alert('Upload Failed', error.message || 'Failed to upload document. Please try again.');
@@ -332,9 +533,11 @@ const showDocumentOptions = (document) => {
     'Choose an action:',
     [
       { text: 'View Document', onPress: () => handleDocumentPress(document) },
-      { text: 'Process as Training Plan', onPress: () => processDocumentAsPlan(document) },
+      { text: 'Open in Library', onPress: () => navigation.navigate('DocumentLibrary', { 
+        highlightDocument: document.id,
+        onDocumentChange: refreshDocuments 
+      }) },
       { text: 'Share', onPress: () => shareDocument(document) },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteDocument(document) },
       { text: 'Cancel', style: 'cancel' }
     ]
   );
@@ -388,84 +591,40 @@ const deleteDocument = (document) => {
   );
 };
 
-//handle favourite
-const handleFavoriteDocument = async (document) => {
-  try {
-    const updatedDoc = {
-      ...document,
-      isFavorite: !document.isFavorite,
-      favoritedAt: !document.isFavorite ? new Date().toISOString() : null
-    };
-    
-    await DocumentProcessor.updateDocumentMetadata(updatedDoc);
-    
-    // Update local state
-    const updatedDocs = allDocuments.map(doc => 
-      doc.id === document.id ? updatedDoc : doc
-    );
-    setAllDocuments(updatedDocs);
-  } catch (error) {
-    Alert.alert('Favorite Error', `Could not update favorite status: ${error.message}`);
-  }
-};
 
-const handlePinDocument = async (document) => {
-  try {
-    const updatedDoc = {
-      ...document,
-      isPinned: !document.isPinned,
-      pinnedAt: !document.isPinned ? new Date().toISOString() : null
-    };
-    
-    await DocumentProcessor.updateDocumentMetadata(updatedDoc);
-    
-    // Update local state
-    const updatedDocs = allDocuments.map(doc => 
-      doc.id === document.id ? updatedDoc : doc
-    );
-    setAllDocuments(updatedDocs);
-    
-    setSnackbarMessage(document.isPinned ? 'Document unpinned' : 'Document pinned');
-    setSnackbarVisible(true);
-  } catch (error) {
-    Alert.alert('Pin Error', `Could not pin document: ${error.message}`);
-  }
-};
-
-const handleDeleteDocument = async (document) => {
-  if (document.isPinned) {
-    Alert.alert(
-      'Cannot Delete Pinned Document',
-      'This document is pinned and protected from deletion. Unpin it first to delete.',
-      [{ text: 'OK' }]
-    );
-    return;
-  }
-
-  Alert.alert(
-    'Delete Document',
-    `Are you sure you want to delete "${document.originalName}"? This action cannot be undone.`,
-    [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await DocumentProcessor.deleteDocument(document.id);
-            
-            // Update local state
-            const updatedDocs = allDocuments.filter(doc => doc.id !== document.id);
-            setAllDocuments(updatedDocs);
-            
-            setSnackbarMessage('Document deleted successfully');
-            setSnackbarVisible(true);
-          } catch (error) {
-            Alert.alert('Delete Failed', 'Could not delete document. Please try again.');
-          }
-        }
-      }
-    ]
+const renderFavorites = () => {
+  return (
+    <View style={{ padding: SPACING.md }}>
+      <View style={styles.favoritesRedirect}>
+        <Icon name="favorite" size={64} color="#FF6B6B" />
+        <Text style={[TEXT_STYLES.h3, { marginTop: SPACING.md, textAlign: 'center' }]}>
+          Favorite Documents
+        </Text>
+        <Text style={[TEXT_STYLES.body2, { marginTop: SPACING.sm, textAlign: 'center', color: COLORS.textSecondary }]}>
+          View and manage all your favorite documents in the Document Library.
+        </Text>
+        
+        <Button
+          mode="contained"
+          onPress={() => navigation.navigate('DocumentLibrary', { showFavorites: true })}
+          style={styles.libraryButton}
+          icon="favorite"
+        >
+          View Favorites
+        </Button>
+        
+        <Button
+          mode="outlined"
+          onPress={() => navigation.navigate('DocumentLibrary', { 
+            onDocumentChange: refreshDocuments 
+          })}
+          style={[styles.libraryButton, { marginTop: SPACING.sm }]}
+          icon="library-books"
+        >
+          Browse All Documents
+        </Button>
+      </View>
+    </View>
   );
 };
 
@@ -473,44 +632,52 @@ const handleDeleteDocument = async (document) => {
 const renderTabSpecificFAB = () => {
   if (!plan) return null;
 
-  const fabConfigs = {
-    overview: {
-      icon: "play-arrow",
-      label: "Start Training",
-      onPress: handleStartPlan,
-      show: plan.isOwned
-    },
-    documents: {
-      icon: "add",
-      label: "Add Document",
-      onPress: () => setDocumentUploadModalVisible(true),
-      show: true
-    },
-    sessions: {
-      icon: "add",
-      label: "Add Session",
-      onPress: () => navigation.navigate('SessionBuilder', { planId: plan.id }),
-      show: true
-    },
-    progress: {
-      icon: "analytics",
-      label: "View Progress",
-      onPress: () => Alert.alert('Feature Coming Soon', 'Detailed progress view will be available soon!'),
-      show: true
-    },
-    nutrition: {
-      icon: "lightbulb",
-      label: "Nutrition Tips",
-      onPress: () => Alert.alert('Nutrition Tip', 'Stay hydrated! Drink water 30 minutes before your workout for optimal performance.'),
-      show: true
-    },
-    analytics: {
-      icon: "assessment",
-      label: "Analytics",
-      onPress: () => navigation.navigate('PerformanceAnalytics', { planId: plan.id }),
-      show: true
-    }
-  };
+const fabConfigs = {
+  overview: {
+    icon: "play-arrow",
+    label: "Start Training",
+    onPress: handleStartPlan,
+    show: plan.isOwned
+  },
+  documents: {
+  icon: "library-books",
+  label: "Document Library",
+  onPress: () => navigation.navigate('DocumentLibrary', { 
+    onDocumentChange: refreshDocuments 
+  }),
+  show: true
+},
+  favorites: {
+    icon: "favorite",
+    label: "View Favorites",
+    onPress: () => navigation.navigate('DocumentLibrary', { showFavorites: true }),
+    show: true
+  },
+  sessions: {
+    icon: "add",
+    label: "Add Session",
+    onPress: () => navigation.navigate('SessionBuilder', { planId: plan.id }),
+    show: true
+  },
+  progress: {
+    icon: "analytics",
+    label: "View Progress",
+    onPress: () => Alert.alert('Feature Coming Soon', 'Detailed progress view will be available soon!'),
+    show: true
+  },
+  nutrition: {
+    icon: "lightbulb",
+    label: "Nutrition Tips",
+    onPress: () => Alert.alert('Nutrition Tip', 'Stay hydrated! Drink water 30 minutes before your workout for optimal performance.'),
+    show: true
+  },
+  analytics: {
+    icon: "assessment",
+    label: "Analytics",
+    onPress: () => navigation.navigate('PerformanceAnalytics', { planId: plan.id }),
+    show: true
+  }
+};
 
   const currentFAB = fabConfigs[activeTab];
   
@@ -528,6 +695,8 @@ const renderTabSpecificFAB = () => {
 
   const renderOverview = () => (
     <View style={{ padding: SPACING.md }}>
+    {/* Document Info Section - Only in Overview tab */}
+    {renderDocumentInfoSection()}
       {/* Plan Stats */}
       <Surface style={styles.statsCard}>
         <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.md, textAlign: 'center' }]}>
@@ -622,21 +791,29 @@ const renderTabSpecificFAB = () => {
         </Card>
       )}
 
-      {/* Creator Info */}
+      {/* Creator Info - Updated with profile picture */}
       <Card style={styles.sectionCard}>
         <Card.Content>
           <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.md }]}>
             Created By
           </Text>
           <View style={styles.creatorInfo}>
-            <Avatar.Text
-              size={40}
-              label={plan.creator.charAt(0).toUpperCase()}
-              style={{ backgroundColor: COLORS.primary }}
-            />
+            {plan.creatorProfileImage ? (
+              <Avatar.Image
+                size={40}
+                source={{ uri: plan.creatorProfileImage }}
+                style={{ backgroundColor: COLORS.primary }}
+              />
+            ) : (
+              <Avatar.Text
+                size={40}
+                label={getCreatorInitials(plan)}
+                style={{ backgroundColor: COLORS.primary }}
+              />
+            )}
             <View style={styles.creatorDetails}>
               <Text style={[TEXT_STYLES.subtitle1, { fontWeight: 'bold' }]}>
-                {plan.creator}
+                {plan.creatorUsername || plan.creator}
               </Text>
               <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
                 Created: {new Date(plan.createdAt).toLocaleDateString()}
@@ -648,136 +825,230 @@ const renderTabSpecificFAB = () => {
     </View>
   );
 
-  const renderDocuments = () => {
-    if (loadingDocs) {
-      return (
-        <View style={[styles.emptyState, { minHeight: 200 }]}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={[TEXT_STYLES.body2, { marginTop: SPACING.md }]}>
-            Loading documents...
-          </Text>
-        </View>
-      );
-    }
+  
 
+ const renderDocuments = () => {
+  if (loadingDocs) {
     return (
-      <View style={{ padding: SPACING.md }}>
-        {allDocuments.length > 0 ? (
-          <FlatList
-            data={allDocuments}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item: document }) => (
-              <Card style={styles.documentCard}>
-                <TouchableOpacity
-                  onPress={() => handleDocumentPress(document)}
-                  activeOpacity={0.7}
-                >
-                  <Card.Content>
-                    <View style={styles.documentContainer}>
-                      {/* Favorite Icon - Top Left */}
-                      <View style={styles.favoriteContainer}>
-                        <IconButton
-                          icon={document.isFavorite ? "favorite" : "favorite-border"}
-                          iconColor={document.isFavorite ? "#FF6B6B" : COLORS.secondary}
-                          size={20}
-                          onPress={() => handleFavoriteDocument(document)}
-                          style={styles.favoriteIcon}
-                        />
-                      </View>
-
-                      {/* Pin Icon - Top Right */}
-                      <View style={styles.pinContainer}>
-                        <IconButton
-                          icon={document.isPinned ? "push-pin" : "outline"}
-                          iconColor={document.isPinned ? "#4CAF50" : COLORS.secondary}
-                          size={18}
-                          onPress={() => handlePinDocument(document)}
-                          style={styles.pinIcon}
-                        />
-                      </View>
-
-                      <View style={styles.documentHeader}>
-                        <View style={styles.documentIconContainer}>
-                          <Icon 
-                            name={getDocumentIcon(document)} 
-                            size={32} 
-                            color={getDocumentColor(document)} 
-                          />
-                        </View>
-                        <View style={styles.documentInfo}>
-                          <Text style={[TEXT_STYLES.subtitle1, { fontWeight: 'bold' }]}>
-                            {document.originalName}
-                          </Text>
-                          <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
-                            {getDocumentTypeLabel(document)} • {formatFileSize(document.size)}
-                          </Text>
-                          <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
-                            Uploaded: {new Date(document.uploadedAt).toLocaleDateString()}
-                          </Text>
-                          {document.processed && (
-                            <Chip
-                              compact
-                              mode="flat"
-                              style={{ 
-                                backgroundColor: COLORS.success + '20',
-                                alignSelf: 'flex-start',
-                                marginTop: SPACING.xs
-                              }}
-                              textStyle={{ color: COLORS.success, fontSize: 10 }}
-                            >
-                              Processed
-                            </Chip>
-                          )}
-                        </View>
-                        <View style={styles.documentActions}>
-                          <IconButton
-                            icon="visibility"
-                            size={20}
-                            onPress={() => handleDocumentPress(document)}
-                          />
-                          <IconButton
-                            icon="more-vert"
-                            size={20}
-                            onPress={() => showDocumentOptions(document)}
-                          />
-                        </View>
-                      </View>
-
-                      {/* Delete Icon - Bottom Right */}
-                      <View style={styles.deleteContainer}>
-                        <IconButton
-                          icon="delete-outline"
-                          iconColor={document.isPinned ? COLORS.disabled : "#F44336"}
-                          size={20}
-                          onPress={() => handleDeleteDocument(document)}
-                          style={[
-                            styles.deleteIcon,
-                            document.isPinned && styles.disabledIcon
-                          ]}
-                          disabled={document.isPinned}
-                        />
-                      </View>
-                    </View>
-                  </Card.Content>
-                </TouchableOpacity>
-              </Card>
-            )}
-            scrollEnabled={false}
-          />
-        ) : (
-          <View style={styles.emptyState}>
-            <Icon name="description" size={64} color={COLORS.textSecondary} />
-            <Text style={[TEXT_STYLES.h3, { marginTop: SPACING.md, color: COLORS.textSecondary }]}>
-              No Documents Available
-            </Text>
-            <Text style={[TEXT_STYLES.body2, { marginTop: SPACING.sm, textAlign: 'center', color: COLORS.textSecondary }]}>
-              Upload your first document to get started with your training plans.
-            </Text>
-          </View>
-        )}
+      <View style={[styles.emptyState, { minHeight: 200 }]}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={[TEXT_STYLES.body2, { marginTop: SPACING.md }]}>
+          Loading documents...
+        </Text>
       </View>
     );
-  };
+  }
+
+  // If documents exist, show them directly
+  if (allDocuments.length > 0) {
+    return (
+      <View style={{ padding: SPACING.md }}>
+        {/* Header with library button */}
+        <View style={styles.documentsHeader}>
+          <Text style={[TEXT_STYLES.h3, { flex: 1 }]}>
+            Documents ({allDocuments.length})
+          </Text>
+          <Button
+            mode="outlined"
+            compact
+            onPress={() => navigation.navigate('DocumentLibrary')}
+            icon="library-books"
+          >
+            Full Library
+          </Button>
+        </View>
+        
+        <FlatList
+          data={allDocuments.slice(0, 10)} // Show first 10 documents
+          keyExtractor={(item) => item.id}
+          renderItem={({ item: document }) => (
+  <Card style={[
+    styles.documentCard,
+    document.isPinned && document.isFavorite && styles.pinnedFavoriteCard,
+    document.isPinned && !document.isFavorite && styles.pinnedCard,
+    !document.isPinned && document.isFavorite && styles.favoriteCard,
+  ]}>
+    <TouchableOpacity
+          onPress={() => handleDocumentPress(document)}
+          activeOpacity={0.7}
+        >
+          <Card.Content>
+            <View style={styles.documentContainer}>
+              <View style={styles.documentHeader}>
+                <View style={styles.documentIconContainer}>
+                  <Icon 
+                    name={getDocumentIcon(document)} 
+                    size={32} 
+                    color={getDocumentColor(document)} 
+                  />
+                </View>
+                <View style={styles.documentInfo}>
+                  <Text style={[TEXT_STYLES.subtitle1, { fontWeight: 'bold' }]}>
+                    {document.originalName}
+                  </Text>
+                  <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
+                    {getDocumentTypeLabel(document)} • {formatFileSize(document.size)}
+                  </Text>
+                  <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
+                    Uploaded: {new Date(document.uploadedAt).toLocaleDateString()}
+                  </Text>
+                  
+                  {/* Status badges */}
+                  <View style={styles.statusBadges}>
+                    {document.isPinned && (
+                      <Chip
+                        compact
+                        mode="flat"
+                        style={styles.pinnedBadge}
+                        textStyle={styles.badgeText}
+                      >
+                        Pinned
+                      </Chip>
+                    )}
+                    {document.processed && (
+                      <Chip
+                        compact
+                        mode="flat"
+                        style={{ 
+                          backgroundColor: COLORS.success + '20',
+                          alignSelf: 'flex-start',
+                          marginTop: SPACING.xs
+                        }}
+                        textStyle={{ color: COLORS.success, fontSize: 10 }}
+                      >
+                        Processed
+                      </Chip>
+                    )}
+                    {document.isFavorite && (
+                      <Chip
+                        compact
+                        mode="flat"
+                        style={styles.favoriteBadge}
+                        textStyle={styles.badgeText}
+                      >
+                        Favorite
+                      </Chip>
+                    )}
+                  </View>
+                </View>
+              </View>
+
+              {/* Action buttons */}
+              <View style={styles.documentActionsRow}>
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => handleFavoriteDocument(document)}
+                >
+                  <Icon
+                    name={document.isFavorite ? "favorite" : "favorite-border"}
+                    size={20}
+                    color={document.isFavorite ? "#4CAF50" : COLORS.textSecondary}
+                  />
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => handlePinDocument(document)}
+                >
+                  <Icon
+                    name="push-pin"
+                    size={18}
+                    color={document.isPinned ? "#2196F3" : COLORS.textSecondary}
+                    style={{
+                      transform: [{ rotate: document.isPinned ? '-45deg' : '0deg' }],
+                      opacity: document.isPinned ? 1 : 0.6
+                    }}
+                  />
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={[styles.actionButton, document.isPinned && styles.disabledAction]}
+                  onPress={() => handleDeleteDocument(document)}
+                  disabled={document.isPinned}
+                >
+                  <Icon
+                    name="delete-outline"
+                    size={20}
+                    color={document.isPinned ? COLORS.disabled : "#F44336"}
+                  />
+                </TouchableOpacity>
+                
+                <IconButton
+                  icon="more-vert"
+                  size={20}
+                  onPress={() => showDocumentOptions(document)}
+                />
+              </View>
+            </View>
+          </Card.Content>
+        </TouchableOpacity>
+      </Card>
+    )}
+          scrollEnabled={false}
+          ListFooterComponent={() => 
+            allDocuments.length > 10 ? (
+              <Button
+                mode="text"
+                onPress={() => navigation.navigate('DocumentLibrary')}
+                style={{ marginTop: SPACING.md }}
+                icon="arrow-right"
+              >
+                View all {allDocuments.length} documents in Library
+              </Button>
+            ) : null
+          }
+        />
+      </View>
+    );
+  }
+
+  // If no documents exist, show the library redirect
+  return (
+    <View style={{ padding: SPACING.md }}>
+      <View style={styles.documentsRedirect}>
+        <Icon name="folder-open" size={64} color={COLORS.primary} />
+        <Text style={[TEXT_STYLES.h3, { marginTop: SPACING.md, textAlign: 'center' }]}>
+          Document Library
+        </Text>
+        <Text style={[TEXT_STYLES.body2, { marginTop: SPACING.sm, textAlign: 'center', color: COLORS.textSecondary }]}>
+          No documents found. Upload your first training document to get started.
+        </Text>
+        
+        <Button
+          mode="contained"
+          onPress={() => setDocumentUploadModalVisible(true)}
+          style={styles.libraryButton}
+          icon="add"
+        >
+          Upload Document
+        </Button>
+        
+        <Button
+          mode="outlined"
+          onPress={() => navigation.navigate('DocumentLibrary')}
+          style={[styles.libraryButton, { marginTop: SPACING.sm }]}
+          icon="library-books"
+        >
+          Open Document Library
+        </Button>
+
+        <Surface style={styles.libraryPreview}>
+          <Text style={[TEXT_STYLES.subtitle2, { marginBottom: SPACING.sm }]}>
+            Library Features:
+          </Text>
+          <View style={styles.featuresList}>
+            <Text style={styles.featureItem}>• Advanced search and filtering</Text>
+            <Text style={styles.featureItem}>• Document favorites and bookmarks</Text>
+            <Text style={styles.featureItem}>• File integrity verification</Text>
+            <Text style={styles.featureItem}>• Detailed document information</Text>
+            <Text style={styles.featureItem}>• Easy document sharing</Text>
+          </View>
+        </Surface>
+      </View>
+    </View>
+  );
+};
+
 
   const renderSessions = () => (
     <View style={{ padding: SPACING.md }}>
@@ -1566,6 +1837,128 @@ deleteIcon: {
 },
 disabledIcon: {
   opacity: 0.3,
+},
+clearAllSection: {
+  marginBottom: SPACING.md,
+  alignItems: 'center',
+},
+clearAllButton: {
+  borderColor: '#F44336',
+},
+pinnedDocumentCard: {
+  borderLeftWidth: 4,
+  borderLeftColor: '#4CAF50',
+},
+favoritesBadges: {
+  flexDirection: 'row',
+  flexWrap: 'wrap',
+},
+documentInfoSection: {
+  marginHorizontal: SPACING.md,
+  marginVertical: SPACING.sm,
+  borderRadius: 8,
+  elevation: 1,
+},
+documentInfoContainer: {
+  padding: SPACING.md,
+},
+documentInfoHeader: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  marginBottom: SPACING.sm,
+},
+documentInfoContent: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  paddingVertical: SPACING.xs,
+},
+documentNameContainer: {
+  flex: 1,
+  marginRight: SPACING.sm,
+},
+documentsRedirect: {
+  alignItems: 'center',
+  padding: SPACING.xl,
+  backgroundColor: COLORS.surface,
+  borderRadius: 12,
+  margin: SPACING.md,
+},
+favoritesRedirect: {
+  alignItems: 'center',
+  padding: SPACING.xl,
+  backgroundColor: COLORS.surface,
+  borderRadius: 12,
+  margin: SPACING.md,
+},
+libraryButton: {
+  marginTop: SPACING.md,
+  minWidth: 200,
+},
+libraryPreview: {
+  width: '100%',
+  padding: SPACING.md,
+  marginTop: SPACING.lg,
+  borderRadius: 8,
+  elevation: 1,
+},
+featuresList: {
+  alignItems: 'flex-start',
+},
+featureItem: {
+  ...TEXT_STYLES.body2,
+  color: COLORS.textSecondary,
+  marginBottom: SPACING.xs,
+},
+documentsHeader: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  marginBottom: SPACING.md,
+  paddingHorizontal: SPACING.sm,
+},
+statusBadges: {
+  flexDirection: 'row',
+  marginTop: SPACING.xs,
+  gap: SPACING.xs,
+  flexWrap: 'wrap',
+},
+pinnedBadge: {
+  backgroundColor: '#2196F3' + '20',
+},
+favoriteBadge: {
+  backgroundColor: '#4CAF50' + '20',
+},
+badgeText: {
+  fontSize: 10,
+  fontWeight: 'bold',
+},
+documentActionsRow: {
+  flexDirection: 'row',
+  justifyContent: 'flex-end',
+  alignItems: 'center',
+  gap: SPACING.xs,
+  marginTop: SPACING.sm,
+},
+actionButton: {
+  padding: SPACING.xs,
+  borderRadius: 20,
+  backgroundColor: 'rgba(0,0,0,0.05)',
+},
+disabledAction: {
+  opacity: 0.3,
+},
+pinnedCard: {
+  borderLeftWidth: 4,
+  borderLeftColor: '#2196F3',
+  backgroundColor: '#E3F2FD',
+},
+favoriteCard: {
+  backgroundColor: '#E8F5E8',
+},
+pinnedFavoriteCard: {
+  borderLeftWidth: 4,
+  borderLeftColor: '#2196F3',
+  backgroundColor: '#E8F5E8',
 },
 };
 

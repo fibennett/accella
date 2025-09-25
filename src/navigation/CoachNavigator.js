@@ -12,6 +12,7 @@ import CoachingPlanUploadScreen from '../screens/coach/training/CoachingPlanUplo
 import PlanProcessingScreen from '../screens/coach/training/PlanProcessingScreen';
 import TrainingPlanDetails from '../screens/coach/training/TrainingPlanDetails';
 import DocumentViewer from '../screens/shared/DocumentViewer';
+import DocumentLibrary from '../screens/shared/DocumentLibrary';
 import IntegratedDocumentManager from '../screens/shared/IntegratedDocumentManager';
 import SessionBuilder from '../screens/coach/SessionBuilder';
 import PlayerList from '../screens/coach/PlayerList';
@@ -664,6 +665,11 @@ const DashboardStack = () => (
       options={{ title: 'Upload Coaching Plan' }} 
     />
     <Stack.Screen 
+      name="DocumentLibrary" 
+      component={DocumentLibrary} 
+      options={{ title: 'Document Library' }} 
+    />
+    <Stack.Screen 
       name="DocumentViewer" 
       component={DocumentViewer}
       options={({ route }) => ({ 
@@ -803,6 +809,11 @@ const TrainingStack = () => (
       name="CoachingPlanUploadScreen" 
       component={CoachingPlanUploadScreen} 
       options={{ title: 'Upload Coaching Plan' }} 
+    />
+    <Stack.Screen 
+      name="DocumentLibrary" 
+      component={DocumentLibrary} 
+      options={{ title: 'Document Library' }} 
     />
     <Stack.Screen 
         name="DocumentViewer" 

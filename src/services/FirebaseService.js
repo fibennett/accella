@@ -544,7 +544,7 @@ async checkPhoneUsageCount(phone) {
   // NEW: Sync all offline registrations to Firebase
   async syncOfflineRegistrationsToFirebase() {
     try {
-      console.log('🔄 Checking for offline registrations to sync...');
+      //console.log('🔄 Checking for offline registrations to sync...');
       
       const registeredUsers = await this.getStoredUsers();
       

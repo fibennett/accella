@@ -277,62 +277,145 @@ const IntegratedDocumentManager = ({ navigation, route }) => {
     );
   };
 
-  const handleProcessDocument = async (documentId) => {
-    try {
-      setProcessing(prev => ({ ...prev, [documentId]: { progress: 0.1, status: 'Starting...' } }));
-      
-      // Simulate processing steps with progress updates
-      setProcessing(prev => ({ ...prev, [documentId]: { progress: 0.3, status: 'Extracting content...' } }));
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      setProcessing(prev => ({ ...prev, [documentId]: { progress: 0.6, status: 'Analyzing structure...' } }));
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      setProcessing(prev => ({ ...prev, [documentId]: { progress: 0.9, status: 'Creating training plan...' } }));
-      
-      // Process the document
-      const result = await DocumentProcessor.processTrainingPlan(documentId);
-      
-      setProcessing(prev => ({ ...prev, [documentId]: { progress: 1.0, status: 'Complete!' } }));
-      
-      // Update documents list
-      await loadDocuments();
-      
-      // Show success and navigation options
-      Alert.alert(
-        'Training Plan Created!',
-        `"${result.title}" has been successfully created from your document.`,
-        [
-          {
-            text: 'View Plan',
-            onPress: () => navigation.navigate('TrainingPlanDetails', { planId: result.id })
-          },
-          {
-            text: 'Stay Here',
-            style: 'cancel'
-          }
-        ]
-      );
+const handleProcessDocument = async (documentId) => {
+  try {
+    // First, get the document object to check its processing status
+    const documents = await DocumentProcessor.getStoredDocuments();
+    const document = documents.find(doc => doc.id === documentId);
+    
+    if (!document) {
+      showSnackbar('Document not found', 'error');
+      return;
+    }
 
-      // Clear processing state after a delay
-      setTimeout(() => {
-        setProcessing(prev => {
-          const newState = { ...prev };
-          delete newState[documentId];
-          return newState;
-        });
-      }, 2000);
+    // Check if document already has a linked training plan
+    if (document.linkedTrainingPlanId) {
+      const existingPlans = await DocumentProcessor.getTrainingPlans();
+      const existingPlan = existingPlans.find(plan => plan.id === document.linkedTrainingPlanId);
+      
+      if (existingPlan) {
+        Alert.alert(
+          'Training Plan Already Exists',
+          `A training plan "${existingPlan.title}" has already been created from this document.`,
+          [
+            {
+              text: 'View Existing Plan',
+              onPress: () => navigation.navigate('TrainingPlanDetails', { 
+                planId: existingPlan.id 
+              })
+            },
+            {
+              text: 'Create New Plan',
+              onPress: () => processDocumentWithProgress(documentId, true) // Force reprocess
+            },
+            { text: 'Cancel', style: 'cancel' }
+          ]
+        );
+        return;
+      }
+    }
+    
+    // If no existing plan, proceed with processing
+    await processDocumentWithProgress(documentId, false);
+    
+  } catch (error) {
+    console.error('Error checking document processing status:', error);
+    // Proceed with processing if check fails
+    await processDocumentWithProgress(documentId, false);
+  }
+};
 
-    } catch (error) {
-      console.error('Processing failed:', error);
+// Extract the processing logic into a separate function
+const processDocumentWithProgress = async (documentId, forceReprocess = false) => {
+  try {
+    setProcessing(prev => ({ 
+      ...prev, 
+      [documentId]: { 
+        progress: 0.1, 
+        status: forceReprocess ? 'Starting reprocessing...' : 'Starting...' 
+      } 
+    }));
+    
+    // Simulate processing steps with progress updates
+    setProcessing(prev => ({ 
+      ...prev, 
+      [documentId]: { progress: 0.3, status: 'Extracting content...' } 
+    }));
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    setProcessing(prev => ({ 
+      ...prev, 
+      [documentId]: { progress: 0.6, status: 'Analyzing structure...' } 
+    }));
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    setProcessing(prev => ({ 
+      ...prev, 
+      [documentId]: { 
+        progress: 0.9, 
+        status: forceReprocess ? 'Creating new training plan...' : 'Creating training plan...' 
+      } 
+    }));
+    
+    // Process the document with force option if needed
+    const result = await DocumentProcessor.processTrainingPlan(documentId, { 
+      force: forceReprocess 
+    });
+    
+    setProcessing(prev => ({ 
+      ...prev, 
+      [documentId]: { progress: 1.0, status: 'Complete!' } 
+    }));
+    
+    // Update documents list
+    await loadDocuments();
+    
+    // Show success and navigation options
+    const alertTitle = forceReprocess ? 'New Training Plan Created!' : 'Training Plan Created!';
+    const alertMessage = forceReprocess 
+      ? `A new version "${result.title}" has been successfully created from your document.`
+      : `"${result.title}" has been successfully created from your document.`;
+    
+    Alert.alert(
+      alertTitle,
+      alertMessage,
+      [
+        {
+          text: 'View Plan',
+          onPress: () => navigation.navigate('TrainingPlanDetails', { planId: result.id })
+        },
+        {
+          text: 'Stay Here',
+          style: 'cancel'
+        }
+      ]
+    );
+    
+    // Clear processing state after a delay
+    setTimeout(() => {
       setProcessing(prev => {
         const newState = { ...prev };
         delete newState[documentId];
         return newState;
       });
+    }, 2000);
+    
+  } catch (error) {
+    console.error('Processing failed:', error);
+    setProcessing(prev => {
+      const newState = { ...prev };
+      delete newState[documentId];
+      return newState;
+    });
+    
+    // Show more specific error messages
+    if (error.message && error.message.includes('already exists')) {
+      showSnackbar('Training plan already exists for this document', 'warning');
+    } else {
       showSnackbar(`Processing failed: ${error.message}`, 'error');
     }
-  };
+  }
+};
 
   const handleViewDocument = (document) => {
     navigation.navigate('DocumentViewer', {

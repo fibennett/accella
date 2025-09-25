@@ -448,37 +448,68 @@ class PlatformUtils {
   }
 
   // Helper method to safely execute platform-specific code with error handling
-  static async executePlatformSpecific(webFn, mobileFn, fallback = null, timeout = 10000) {
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Platform operation timeout')), timeout)
-    );
-    
-    try {
-      const operation = this.isWeb() && webFn 
-        ? webFn()
-        : this.isMobile() && mobileFn 
-        ? mobileFn()
-        : fallback;
+  // In PlatformUtils.js, replace the existing executePlatformSpecific method:
+static async executePlatformSpecific(webFn, mobileFn, fallback = null, timeout = 30000) {
+  try {
+    const operation = this.isWeb() && webFn 
+      ? webFn()
+      : this.isMobile() && mobileFn 
+      ? mobileFn()
+      : fallback;
         
-      if (operation && typeof operation.then === 'function') {
+    // Don't apply timeout to user interaction operations
+    if (operation && typeof operation.then === 'function') {
+      // Check if this is a user interaction operation (file selection)
+      const isUserInteraction = webFn && webFn.toString().includes('selectDocument');
+      
+      if (isUserInteraction) {
+        // No timeout for user interactions - let them take as long as needed
+        return await operation;
+      } else {
+        // Apply timeout only for automated operations
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Platform operation timeout')), timeout)
+        );
         return await Promise.race([operation, timeoutPromise]);
       }
-      
-      return operation;
-    } catch (error) {
-      console.warn('Platform-specific execution failed:', error.message);
-      
-      if (error.message.includes('timeout')) {
-        throw this.createError(
-          'Operation timed out',
-          ['Try again with a smaller file', 'Check your connection'],
-          'timeout'
-        );
-      }
-      
-      return fallback;
     }
+    
+    return operation;
+  } catch (error) {
+    console.warn('Platform-specific execution failed:', error.message);
+    
+    if (error.message.includes('timeout')) {
+      throw this.createError(
+        'Operation timed out',
+        ['Try again with a smaller file', 'Check your connection'],
+        'timeout'
+      );
+    }
+    
+    return fallback;
   }
+}
+
+// New method specifically for user interactions 
+static async executeUserInteraction(webFn, mobileFn, fallback = null) {
+  try {
+    const operation = this.isWeb() && webFn 
+      ? webFn()
+      : this.isMobile() && mobileFn 
+      ? mobileFn()
+      : fallback;
+        
+    // No timeout for user interactions
+    if (operation && typeof operation.then === 'function') {
+      return await operation;
+    }
+    
+    return operation;
+  } catch (error) {
+    console.warn('User interaction failed:', error.message);
+    throw error; // Don't wrap user cancellations
+  }
+}
 
   // Enhanced module availability check with integrity status
   static checkModuleAvailability() {
@@ -680,16 +711,19 @@ class PlatformUtils {
     
     console.error(errorMessage, error);
     
-    // Handle specific error types
-    if (error.message.includes('requireNativeComponent')) {
+    // Add this new case for timeout errors:
+    if (error.message.includes('timeout') || error.message.includes('timed out')) {
       return this.createError(
-        'Native component not available on this platform',
+        'Operation timed out - file selection took too long',
         [
-          'This feature requires native mobile components',
-          'Try using the mobile app for full functionality',
-          'Some features are limited on web platform'
+          'Click the upload button again to retry',
+          'Make sure to select a file when the browser dialog opens',
+          'Check if popup blockers are preventing the file dialog',
+          'Try using a smaller file if the issue persists',
+          'Refresh the page and try again'
         ],
-        'platform_incompatibility'
+        'timeout_error',
+        { originalError: error.message, context }
       );
     }
     

@@ -46,7 +46,7 @@ const TrainingPlanLibrary = ({ navigation, route }) => {
   const dispatch = useDispatch();
   const { user, isOnline } = useSelector(state => state.auth);
   const { trainingPlans, error } = useSelector(state => state.training);
-
+  
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(50)).current;
@@ -96,28 +96,39 @@ const TrainingPlanLibrary = ({ navigation, route }) => {
   }, [route.params]);
 
   // MOVED: Define loadTrainingPlans function before it's used
-  const loadTrainingPlans = useCallback(async () => {
-    try {
-      setLoading(true);
-      const realPlans = await DocumentProcessor.getTrainingPlans();
-      setPlans(realPlans);
-      
-      // Check if we need to highlight a newly created plan
-      const { newPlanId } = route.params || {};
-      if (newPlanId) {
-        const newPlan = realPlans.find(plan => plan.id === newPlanId);
-        if (newPlan) {
-          // Highlight the new plan (you can add visual highlighting here)
-          console.log('New plan found:', newPlan.title);
-        }
+// In TrainingPlanLibrary.js, update the loadTrainingPlans method:
+// In TrainingPlanLibrary.js, update loadTrainingPlans:
+const loadTrainingPlans = useCallback(async () => {
+  try {
+    setLoading(true);
+    const realPlans = await DocumentProcessor.getTrainingPlans();
+    
+    // Enhance plans with proper structure and ensure original name is preserved
+    const enhancedPlans = realPlans.map(plan => ({
+      ...plan,
+      academyName: plan.academyName || plan.title,
+      originalName: plan.originalName || plan.sourceDocumentName || 'Training Document',
+      creator: plan.creatorUsername || plan.creator || 'Coach',
+      creatorUsername: plan.creatorUsername || plan.creator,
+    }));
+    
+    setPlans(enhancedPlans);
+    
+    // Check if we need to highlight a newly created plan
+    const { newPlanId } = route.params || {};
+    if (newPlanId) {
+      const newPlan = enhancedPlans.find(plan => plan.id === newPlanId);
+      if (newPlan) {
+        console.log('New plan found:', newPlan.title, 'from document:', newPlan.originalName);
       }
-    } catch (error) {
-      console.error('Error loading training plans:', error);
-      Alert.alert('Error', 'Failed to load training plans');
-    } finally {
-      setLoading(false);
     }
-  }, [route.params]);
+  } catch (error) {
+    console.error('Error loading training plans:', error);
+    Alert.alert('Error', 'Failed to load training plans');
+  } finally {
+    setLoading(false);
+  }
+}, [route.params]);
 
   // Refresh handler
   const onRefresh = useCallback(async () => {
@@ -157,9 +168,11 @@ const TrainingPlanLibrary = ({ navigation, route }) => {
     Alert.alert('Feature Coming Soon', 'Marketplace payment system will be available in the next update!');
   }, []);
 
-  const handleCreatePlan = useCallback(() => {
-    navigation.navigate('CreateTrainingPlan');
-  }, [navigation]);
+const handleCreatePlan = useCallback(() => {
+  navigation.navigate('CreateTrainingPlan', {
+    currentUser: user // Pass the current user data
+  });
+}, [navigation, user]);
 
   const handleUploadPlan = useCallback(() => {
     navigation.navigate('CoachingPlanUploadScreen');
@@ -206,158 +219,174 @@ const TrainingPlanLibrary = ({ navigation, route }) => {
     );
   }
 
-  const renderPlanCard = ({ item: plan, index }) => {
-    // Check if this is a newly created plan
-    const { newPlanId } = route.params || {};
-    const isNewPlan = plan.id === newPlanId;
+// In TrainingPlanLibrary.js, update the renderPlanCard function:
+const renderPlanCard = ({ item: plan, index }) => {
+  const { newPlanId } = route.params || {};
+  const isNewPlan = plan.id === newPlanId;
 
-    return (
-      <Animated.View
-        style={{
-          opacity: fadeAnim,
-          transform: [{ translateY: slideAnim }],
-          marginBottom: SPACING.md,
-        }}
+  return (
+    <Animated.View
+      style={{
+        opacity: fadeAnim,
+        transform: [{ translateY: slideAnim }],
+        marginBottom: SPACING.md,
+      }}
+    >
+      <TouchableOpacity
+        onPress={() => handlePlanPress(plan)}
+        activeOpacity={0.7}
       >
-        <TouchableOpacity
-          onPress={() => handlePlanPress(plan)}
-          activeOpacity={0.7}
-        >
-          <Card style={{
-            marginHorizontal: SPACING.sm,
-            elevation: 4,
-            borderRadius: 12,
-            // Highlight new plan with a subtle border
-            borderWidth: isNewPlan ? 2 : 0,
-            borderColor: isNewPlan ? COLORS.primary : 'transparent',
-          }}>
-            <LinearGradient
-              colors={plan.isOwned ? ['#667eea', '#764ba2'] : ['#e0e0e0', '#bdbdbd']}
-              style={{
-                height: 120,
-                borderTopLeftRadius: 12,
-                borderTopRightRadius: 12,
-                padding: SPACING.md,
-                justifyContent: 'space-between',
-              }}
-            >
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={[TEXT_STYLES.h3, { color: 'white', marginBottom: SPACING.xs }]}>
-                      {plan.title}
-                    </Text>
-                    {isNewPlan && (
-                      <Text style={{
-                        marginLeft: 8,
-                        backgroundColor: 'rgba(255, 255, 255, 0.3)',
-                        paddingHorizontal: 6,
-                        paddingVertical: 2,
-                        borderRadius: 12,
-                        fontSize: 10,
-                        color: 'white',
-                        fontWeight: 'bold',
-                      }}>
-                        NEW
-                      </Text>
-                    )}
-                  </View>
-                  <Text style={[TEXT_STYLES.caption, { color: 'rgba(255,255,255,0.8)' }]}>
-                    {plan.creator} • {plan.duration}
+        <Card style={{
+          marginHorizontal: SPACING.sm,
+          elevation: 4,
+          borderRadius: 12,
+          borderWidth: isNewPlan ? 2 : 0,
+          borderColor: isNewPlan ? COLORS.primary : 'transparent',
+        }}>
+          <LinearGradient
+            colors={plan.isOwned ? ['#667eea', '#764ba2'] : ['#e0e0e0', '#bdbdbd']}
+            style={{
+              height: 140,
+              borderTopLeftRadius: 12,
+              borderTopRightRadius: 12,
+              padding: SPACING.md,
+              justifyContent: 'space-between',
+            }}
+          >
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <View style={{ flex: 1 }}>
+                {/* Academy Name - Main Display */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.xs }}>
+                  <Text style={[TEXT_STYLES.h3, { color: 'white', marginBottom: 0, fontSize: 16 }]}>
+                    {plan.academyName || plan.title}
                   </Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  {plan.isOwned ? (
-                    <Icon name="check-circle" size={24} color="white" />
-                  ) : (
-                    <Text style={[TEXT_STYLES.body2, { color: 'white', fontWeight: 'bold' }]}>
-                      ${plan.price}
+                  {isNewPlan && (
+                    <Text style={{
+                      marginLeft: 8,
+                      backgroundColor: 'rgba(255, 255, 255, 0.3)',
+                      paddingHorizontal: 6,
+                      paddingVertical: 2,
+                      borderRadius: 12,
+                      fontSize: 10,
+                      color: 'white',
+                      fontWeight: 'bold',
+                    }}>
+                      NEW
                     </Text>
                   )}
                 </View>
+                
+                {/* Creator and Duration Row - Use username */}
+                <Text style={[TEXT_STYLES.caption, { color: 'rgba(255,255,255,0.8)', marginBottom: SPACING.xs }]}>
+                  {plan.creatorUsername || plan.creator} • {plan.duration}
+                </Text>
+                
+                {/* FIXED: Show actual source document name */}
+                <Text style={[TEXT_STYLES.caption, { 
+                  color: 'rgba(255,255,255,0.7)', 
+                  fontStyle: 'italic',
+                  fontSize: 11,
+                  lineHeight: 14
+                }]}>
+                  ({plan.originalName || plan.sourceDocumentName || 'Training Document'})
+                </Text>
               </View>
               
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              {/* Rest of the card content remains the same */}
+              <View style={{ alignItems: 'flex-end' }}>
+                {plan.isOwned ? (
+                  <Icon name="check-circle" size={24} color="white" />
+                ) : (
+                  <Text style={[TEXT_STYLES.body2, { color: 'white', fontWeight: 'bold' }]}>
+                    ${plan.price}
+                  </Text>
+                )}
+              </View>
+            </View>
+            
+            {/* Rest of gradient content remains unchanged */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Chip
+                mode="flat"
+                style={{
+                  backgroundColor: difficultyColors[plan.difficulty],
+                  height: 28,
+                }}
+                textStyle={{ color: 'white', fontSize: 12 }}
+              >
+                {plan.difficulty.charAt(0).toUpperCase() + plan.difficulty.slice(1)}
+              </Chip>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Icon name="star" size={16} color="#FFD700" />
+                <Text style={[TEXT_STYLES.caption, { color: 'white', marginLeft: 4 }]}>
+                  {plan.rating}
+                </Text>
+              </View>
+            </View>
+          </LinearGradient>
+
+          {/* Rest of your existing Card.Content - keep unchanged */}
+          <Card.Content style={{ padding: SPACING.md }}>
+            <Text style={[TEXT_STYLES.body2, { marginBottom: SPACING.sm, color: COLORS.textSecondary }]}>
+              {plan.description}
+            </Text>
+            
+            {plan.isOwned && plan.progress > 0 && (
+              <View style={{ marginBottom: SPACING.sm }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
+                    Progress
+                  </Text>
+                  <Text style={[TEXT_STYLES.caption, { color: COLORS.primary }]}>
+                    {plan.progress}%
+                  </Text>
+                </View>
+                <ProgressBar
+                  progress={plan.progress / 100}
+                  color={COLORS.primary}
+                  style={{ height: 6, borderRadius: 3 }}
+                />
+              </View>
+            )}
+
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Icon name="fitness-center" size={16} color={COLORS.textSecondary} />
+                <Text style={[TEXT_STYLES.caption, { marginLeft: 4, color: COLORS.textSecondary }]}>
+                  {plan.sessionsCount} sessions
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Icon name="download" size={16} color={COLORS.textSecondary} />
+                <Text style={[TEXT_STYLES.caption, { marginLeft: 4, color: COLORS.textSecondary }]}>
+                  {plan.downloads}
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: SPACING.sm }}>
+              {plan.tags.slice(0, 3).map((tag, tagIndex) => (
                 <Chip
-                  mode="flat"
+                  key={tagIndex}
+                  mode="outlined"
+                  compact
                   style={{
-                    backgroundColor: difficultyColors[plan.difficulty],
-                    height: 28,
+                    marginRight: SPACING.xs,
+                    marginBottom: SPACING.xs,
+                    height: 24,
                   }}
-                  textStyle={{ color: 'white', fontSize: 12 }}
+                  textStyle={{ fontSize: 10 }}
                 >
-                  {plan.difficulty.charAt(0).toUpperCase() + plan.difficulty.slice(1)}
+                  {tag}
                 </Chip>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Icon name="star" size={16} color="#FFD700" />
-                  <Text style={[TEXT_STYLES.caption, { color: 'white', marginLeft: 4 }]}>
-                    {plan.rating}
-                  </Text>
-                </View>
-              </View>
-            </LinearGradient>
-
-            <Card.Content style={{ padding: SPACING.md }}>
-              <Text style={[TEXT_STYLES.body2, { marginBottom: SPACING.sm, color: COLORS.textSecondary }]}>
-                {plan.description}
-              </Text>
-              
-              {plan.isOwned && plan.progress > 0 && (
-                <View style={{ marginBottom: SPACING.sm }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
-                      Progress
-                    </Text>
-                    <Text style={[TEXT_STYLES.caption, { color: COLORS.primary }]}>
-                      {plan.progress}%
-                    </Text>
-                  </View>
-                  <ProgressBar
-                    progress={plan.progress / 100}
-                    color={COLORS.primary}
-                    style={{ height: 6, borderRadius: 3 }}
-                  />
-                </View>
-              )}
-
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Icon name="fitness-center" size={16} color={COLORS.textSecondary} />
-                  <Text style={[TEXT_STYLES.caption, { marginLeft: 4, color: COLORS.textSecondary }]}>
-                    {plan.sessionsCount} sessions
-                  </Text>
-                </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Icon name="download" size={16} color={COLORS.textSecondary} />
-                  <Text style={[TEXT_STYLES.caption, { marginLeft: 4, color: COLORS.textSecondary }]}>
-                    {plan.downloads}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: SPACING.sm }}>
-                {plan.tags.slice(0, 3).map((tag, tagIndex) => (
-                  <Chip
-                    key={tagIndex}
-                    mode="outlined"
-                    compact
-                    style={{
-                      marginRight: SPACING.xs,
-                      marginBottom: SPACING.xs,
-                      height: 24,
-                    }}
-                    textStyle={{ fontSize: 10 }}
-                  >
-                    {tag}
-                  </Chip>
-                ))}
-              </View>
-            </Card.Content>
-          </Card>
-        </TouchableOpacity>
-      </Animated.View>
-    );
-  };
+              ))}
+            </View>
+          </Card.Content>
+        </Card>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+};
 
   const renderCategoryChip = ({ item: category }) => (
     <Chip
@@ -406,6 +435,12 @@ const TrainingPlanLibrary = ({ navigation, route }) => {
               iconColor="white"
               size={24}
               onPress={() => setFilterModalVisible(true)}
+            />
+            <IconButton 
+              icon="description" 
+              iconColor="white"
+              size={24}
+              onPress={() => navigation.navigate('DocumentLibrary', { showAllDocuments: true })} 
             />
           </View>
         </View>

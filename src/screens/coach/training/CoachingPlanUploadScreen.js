@@ -6,7 +6,8 @@ import {
   StyleSheet,
   Alert,
   ScrollView,
-  RefreshControl
+  RefreshControl,
+  TouchableOpacity,
 } from 'react-native';
 import { Card, Button, ProgressBar, Surface, IconButton, Chip } from 'react-native-paper';
 import DocumentProcessor from '../../../services/DocumentProcessor';
@@ -98,6 +99,7 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
   const [refreshing, setRefreshing] = useState(false);
   const [platformReady, setPlatformReady] = useState(false);
   const [integrityResult, setIntegrityResult] = useState(null);
+  const [showDocuments, setShowDocuments] = useState(true);
 
   useEffect(() => {
     initializePlatform();
@@ -109,8 +111,17 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
       setPlatformReady(true);
       loadDocuments();
       
-      // Run automatic maintenance check
-      await DocumentProcessor.scheduleIntegrityMaintenance();
+      // Run automatic maintenance check if available
+      try {
+        if (typeof DocumentProcessor.scheduleIntegrityMaintenance === 'function') {
+          await DocumentProcessor.scheduleIntegrityMaintenance();
+        } else {
+          console.log('Integrity maintenance not available');
+        }
+      } catch (maintenanceError) {
+        console.warn('Integrity maintenance failed:', maintenanceError.message);
+        // Don't fail initialization for maintenance issues
+      }
     } catch (error) {
       console.error('Platform initialization failed:', error);
       setPlatformReady(true); // Continue anyway with fallbacks
@@ -120,7 +131,18 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
 
   const loadDocuments = async () => {
     try {
+      console.log('Loading documents from storage...');
       const docs = await DocumentProcessor.getStoredDocuments();
+      console.log('Documents loaded:', {
+        count: docs.length,
+        documents: docs.map(doc => ({
+          id: doc.id,
+          name: doc.originalName,
+          size: doc.size,
+          hasWebData: !!doc.webFileData,
+          platform: doc.platform
+        }))
+      });
       setDocuments(docs);
     } catch (error) {
       console.error('Error loading documents:', error);
@@ -129,63 +151,97 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
     }
   };
 
-const handleDocumentUpload = async () => {
-  try {
-    setUploading(true);
-    setUploadProgress(0.1);
-    setUploadStatus('Selecting document...');
-    setIntegrityResult(null);
+  const handleDocumentUpload = async () => {
+    try {
+      setUploading(true);
+      setUploadProgress(0.1);
+      setUploadStatus('Opening file selector...');
+      setIntegrityResult(null);
 
-    // Step 1: Select document
-    const file = await DocumentProcessor.selectDocument();
-    if (!file) {
-      setUploading(false);
-      return;
-    }
+      console.log('Starting document upload process...');
 
-    setUploadProgress(0.3);
-    setUploadStatus('Validating file format...');
-
-    // Step 2: Validate file before storage
-    const validation = DocumentProcessor.validateFileForPlatform(file);
-    if (!validation.isValid) {
-      showValidationError(validation);
-      setUploading(false);
-      return;
-    }
-
-    setUploadProgress(0.5);
-    setUploadStatus('Storing file and checking integrity...');
-
-    // Step 3: Store with integrity check
-    const result = await DocumentProcessor.storeDocumentWithIntegrityCheck(file);
-    setIntegrityResult(result.integrityResult);
-
-    setUploadProgress(0.9);
-    setUploadStatus('Integrity verification complete');
-
-    // Step 4: Navigate directly to processing instead of showing in list
-    navigation.navigate('PlanProcessing', {
-      documentId: result.document.id,
-      onComplete: (trainingPlan) => {
-        navigation.navigate('TrainingPlanLibrary', {
-          newPlanId: trainingPlan?.id,
-          showSuccess: true,
-          message: `"${trainingPlan?.title || 'Training Plan'}" created from document!`
-        });
+      // Step 1: Select document
+      const file = await DocumentProcessor.selectDocument();
+      console.log('File selection result:', file ? 'File selected' : 'No file selected');
+      
+      if (!file) {
+        setUploading(false);
+        setUploadStatus('Selection cancelled');
+        return;
       }
-    });
 
-  } catch (error) {
-    console.error('Upload failed:', error);
-    const platformError = PlatformUtils.handlePlatformError(error, 'Document Upload');
-    showUploadError(platformError);
-  } finally {
-    setUploading(false);
-    setUploadProgress(0);
-    setUploadStatus('');
-  }
-};
+      console.log('Selected file details:', {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        hasFile: !!file.file
+      });
+
+      setUploadProgress(0.3);
+      setUploadStatus('Validating file format...');
+
+      // Step 2: Validate file before storage
+      const validation = DocumentProcessor.validateFileForPlatform(file);
+      console.log('File validation result:', validation);
+      
+      if (!validation.isValid) {
+        console.error('File validation failed:', validation.errors);
+        showValidationError(validation);
+        setUploading(false);
+        return;
+      }
+
+      setUploadProgress(0.5);
+      setUploadStatus('Storing file and checking integrity...');
+
+      console.log('About to store document with integrity check...');
+
+      // Step 3: Store with integrity check
+      const result = await DocumentProcessor.storeDocumentWithIntegrityCheck(file);
+      console.log('Storage completed, refreshing document list...');
+      console.log('Storage result:', {
+        hasDocument: !!result.document,
+        documentId: result.document?.id,
+        hasIntegrityResult: !!result.integrityResult
+      });
+
+      await loadDocuments();
+      
+      setIntegrityResult(result.integrityResult);
+
+      setUploadProgress(0.9);
+      setUploadStatus('Integrity verification complete');
+
+      console.log('About to navigate to processing...');
+
+      // Step 4: Navigate to processing
+      navigation.navigate('PlanProcessing', {
+        documentId: result.document.id,
+        onComplete: (trainingPlan) => {
+          navigation.navigate('TrainingPlanLibrary', {
+            newPlanId: trainingPlan?.id,
+            showSuccess: true,
+            message: `"${trainingPlan?.title || 'Training Plan'}" created from document!`
+          });
+        }
+      });
+
+    } catch (error) {
+      console.error('Upload failed with error:', error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        suggestions: error.suggestions
+      });
+      
+      const platformError = PlatformUtils.handlePlatformError(error, 'Document Upload');
+      showUploadError(platformError);
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+      setUploadStatus('');
+    }
+  };
 
   const showValidationError = (validation) => {
     Alert.alert(
@@ -206,254 +262,25 @@ const handleDocumentUpload = async () => {
     );
   };
 
-  const handleIntegrityResults = (result) => {
-    const { document, integrityResult } = result;
-
-    switch (integrityResult.overallStatus) {
-      case 'passed':
-        showSuccessDialog(document, integrityResult);
-        break;
-      case 'warning':
-        showWarningDialog(document, integrityResult);
-        break;
-      case 'failed':
-        showFailureDialog(document, integrityResult);
-        break;
-      case 'error':
-        showErrorDialog(document, integrityResult);
-        break;
-    }
-  };
-
-  const showSuccessDialog = (document, integrityResult) => {
+  const handleClearUploadedPlans = () => {
     Alert.alert(
-      'File Ready for Processing',
-      `"${document.originalName}" uploaded successfully!\n\nSize: ${formatFileSize(document.size)}\nType: ${document.type}\nIntegrity: Verified\n\nReady to create training plan?`,
-      [
-        {
-          text: 'Process Now',
-          onPress: () => startProcessing(document)
-        },
-        {
-          text: 'Save for Later',
-          style: 'default',
-          onPress: () => saveForLater(document)
-        }
-      ]
-    );
-  };
-
-  const showWarningDialog = (document, integrityResult) => {
-    const warnings = Object.values(integrityResult.checks)
-      .flatMap(check => check.warnings || [])
-      .slice(0, 3)
-      .join('\n');
-
-    Alert.alert(
-      'File Uploaded with Warnings',
-      `"${document.originalName}" uploaded but has some issues:\n\n${warnings}\n\nYou can still process it, but results may vary.`,
-      [
-        {
-          text: 'Continue Processing',
-          onPress: () => startProcessing(document)
-        },
-        {
-          text: 'Try Different File',
-          style: 'default',
-          onPress: () => handleDocumentUpload()
-        },
-        {
-          text: 'Save Anyway',
-          style: 'cancel',
-          onPress: () => saveForLater(document)
-        }
-      ]
-    );
-  };
-
-  const showFailureDialog = (document, integrityResult) => {
-    const issues = Object.values(integrityResult.checks)
-      .flatMap(check => check.issues || [])
-      .slice(0, 3)
-      .join('\n');
-
-    Alert.alert(
-      'File Integrity Issues',
-      `"${document.originalName}" has integrity issues:\n\n${issues}\n\nRecommendations:\n${integrityResult.recommendations.join('\n')}`,
-      [
-        {
-          text: 'Try to Repair',
-          onPress: () => attemptRepair(document)
-        },
-        {
-          text: 'Process Anyway',
-          style: 'destructive',
-          onPress: () => startProcessing(document)
-        },
-        {
-          text: 'Try Different File',
-          style: 'cancel',
-          onPress: () => handleDocumentUpload()
-        }
-      ]
-    );
-  };
-
-  const showErrorDialog = (document, integrityResult) => {
-    Alert.alert(
-      'Critical Error',
-      `Critical error during integrity check:\n\n${integrityResult.error}\n\nThe file may be corrupted or incompatible.`,
-      [
-        {
-          text: 'Try Different File',
-          onPress: () => handleDocumentUpload()
-        },
-        {
-          text: 'Delete and Retry',
-          style: 'destructive',
-          onPress: () => deleteAndRetry(document)
-        }
-      ]
-    );
-  };
-
-const startProcessing = (document) => {
-  navigation.navigate('PlanProcessing', {
-    documentId: document.id,
-    onComplete: (trainingPlan) => {
-      // This callback will be called when processing is complete
-      console.log('Processing completed for:', trainingPlan?.title);
-      
-      // Navigate to TrainingPlanLibrary with success message
-      navigation.navigate('TrainingPlanLibrary', {
-        newPlanId: trainingPlan?.id,
-        showSuccess: true,
-        message: `"${trainingPlan?.title || 'Training Plan'}" has been successfully created!`
-      });
-    }
-  });
-};
-
-const saveForLater = (document) => {
-  Alert.alert(
-    'Success!',
-    `"${document.originalName}" saved to your document library. You can process it later.`,
-    [
-      {
-        text: 'View Library',
-        onPress: () => navigation.navigate('TrainingPlanLibrary')
-      },
-      { text: 'OK', style: 'cancel' }
-    ]
-  );
-};
-
-  const attemptRepair = async (document) => {
-    try {
-      Alert.alert('Repairing...', 'Attempting to repair file integrity issues.');
-      const repairResult = await DocumentProcessor.repairDocumentIntegrity(document.id);
-      
-      if (repairResult.repaired) {
-        Alert.alert(
-          'Repair Successful',
-          `File repaired!\n\nActions taken:\n${repairResult.actions.join('\n')}\n\nPost-repair status: ${repairResult.postRepairStatus}`,
-          [
-            {
-              text: 'Process Now',
-              onPress: () => startProcessing(document)
-            },
-            { text: 'OK', style: 'cancel' }
-          ]
-        );
-        await loadDocuments();
-      } else {
-        Alert.alert('No Repairs Needed', repairResult.message);
-      }
-    } catch (error) {
-      Alert.alert(
-        'Repair Failed',
-        `Could not repair file:\n\n${error.message}\n\nTry uploading a different file.`
-      );
-    }
-  };
-
-  const deleteAndRetry = async (document) => {
-    try {
-      await DocumentProcessor.deleteDocument(document.id);
-      await loadDocuments();
-      handleDocumentUpload();
-    } catch (error) {
-      Alert.alert('Delete Failed', `Could not delete file: ${error.message}`);
-    }
-  };
-
-  const handlePinDocument = async (document) => {
-    try {
-      const updatedDoc = {
-        ...document,
-        isPinned: !document.isPinned,
-        pinnedAt: !document.isPinned ? new Date().toISOString() : null
-      };
-      
-      await DocumentProcessor.updateDocumentMetadata(updatedDoc);
-      await loadDocuments();
-      
-      Alert.alert(
-        document.isPinned ? 'Document Unpinned' : 'Document Pinned',
-        document.isPinned 
-          ? 'Document can now be deleted normally'
-          : 'Document is now protected from deletion'
-      );
-    } catch (error) {
-      Alert.alert('Pin Error', `Could not pin document: ${error.message}`);
-    }
-  };
-
-  const handleDeleteDocument = async (document) => {
-    if (document.isPinned) {
-      Alert.alert(
-        'Cannot Delete Pinned Document',
-        'This document is pinned and protected from deletion. Unpin it first to delete.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-
-    Alert.alert(
-      'Delete Document',
-      `Are you sure you want to delete "${document.originalName}"? This action cannot be undone.`,
+      'Clear Uploaded Plans View',
+      'This will clear the uploaded plans from this screen but keep them in storage. You can still access them from the Document Library.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await DocumentProcessor.deleteDocument(document.id);
-              await loadDocuments();
-              Alert.alert('Success', 'Document deleted successfully');
-            } catch (error) {
-              Alert.alert('Delete Failed', `Could not delete document: ${error.message}`);
-            }
+          text: 'Clear View',
+          style: 'default',
+          onPress: () => {
+            setShowDocuments(false);
           }
         }
       ]
     );
   };
 
-  const handleFavoriteDocument = async (document) => {
-    try {
-      const updatedDoc = {
-        ...document,
-        isFavorite: !document.isFavorite,
-        favoritedAt: !document.isFavorite ? new Date().toISOString() : null
-      };
-      
-      await DocumentProcessor.updateDocumentMetadata(updatedDoc);
-      await loadDocuments();
-    } catch (error) {
-      Alert.alert('Favorite Error', `Could not update favorite status: ${error.message}`);
-    }
+  const handleRestoreView = () => {
+    setShowDocuments(true);
   };
 
   const runIntegrityCheck = async (document) => {
@@ -500,11 +327,9 @@ const saveForLater = (document) => {
       'error': '✗',
       'help-outline': '?',
       'security': '🔒',
-      'favorite': '❤️',
-      'heart-outline': '🤍',
-      'map-marker-outline': '📌',
-      'outline': '⭕',
-      'delete-outline': '🗑️'
+      'clear-all': '🗑️',
+      'folder-open': '📂',
+      'refresh': '🔄'
     };
     return (
       <Text style={[{ fontSize: size, color }, style]}>
@@ -594,6 +419,13 @@ const saveForLater = (document) => {
           }
         </Text>
         
+        {PlatformUtils.isWeb() && (
+          <Text style={styles.webNotice}>
+            Web Platform: Click "Choose File" and select your document when the browser dialog opens.
+            The dialog may take a moment to appear.
+          </Text>
+        )}
+
         <Button
           mode="contained"
           onPress={handleDocumentUpload}
@@ -643,91 +475,84 @@ const saveForLater = (document) => {
       )}
 
       {/* Documents List */}
-      {documents.length > 0 && (
+      {documents.length > 0 && showDocuments && (
         <View style={styles.documentsSection}>
-          <Text style={styles.sectionTitle}>Uploaded Plans</Text>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Uploaded Plans</Text>
+            <TouchableOpacity 
+              onPress={handleClearUploadedPlans}
+              style={styles.clearAllButton}
+            >
+              <Card style={styles.clearAllCard}>
+                <Card.Content style={styles.clearAllContent}>
+                  <SafeIcon name="clear-all" size={20} color="#F44336" />
+                  <Text style={styles.clearAllText}>Clear All</Text>
+                </Card.Content>
+              </Card>
+            </TouchableOpacity>
+          </View>
+          
           {documents.map((doc) => (
             <Card key={doc.id} style={styles.documentCard}>
               <Card.Content>
-                <View style={styles.documentContainer}>
-                  {/* Favorite Icon - Top Left */}
-                  <View style={styles.favoriteContainer}>
-                    <IconButton
-                      icon={doc.isFavorite ? "favorite" : "favorite-border"}
-                      iconColor={doc.isFavorite ? "#FF6B6B" : COLORS.secondary}
-                      size={20}
-                      onPress={() => handleFavoriteDocument(doc)}
-                      style={styles.favoriteIcon}
-                    />
-                  </View>
-
-                  {/* Pin Icon - Top Right */}
-                  <View style={styles.pinContainer}>
-                    <IconButton
-                      icon={doc.isPinned ? "push-pin" : "outline"}
-                      iconColor={doc.isPinned ? "#4CAF50" : COLORS.secondary}
-                      size={18}
-                      onPress={() => handlePinDocument(doc)}
-                      style={styles.pinIcon}
-                    />
-                  </View>
-
-                  <View style={styles.documentInfo}>
-                    <SafeIcon 
-                      name={getFileIcon(doc.type)} 
-                      size={24} 
-                      color={COLORS.primary} 
-                    />
-                    <View style={styles.documentDetails}>
-                      <Text style={styles.documentName}>{doc.originalName}</Text>
-                      <Text style={styles.documentMeta}>
-                        {formatFileSize(doc.size)} • {formatDate(doc.uploadedAt)}
-                      </Text>
-                      <Text style={styles.documentStatus}>
-                        {doc.processed ? 'Processed' : 'Pending Processing'}
-                      </Text>
-                      <View style={styles.documentMetadata}>
-                        {doc.platform && (
-                          <Text style={styles.platformTag}>
-                            {doc.platform === 'web' ? 'Web' : 'Mobile'}
-                          </Text>
-                        )}
-                        <IntegrityStatusChip document={doc} />
-                        {doc.isPinned && (
-                          <Text style={styles.pinnedTag}>Pinned</Text>
-                        )}
-                      </View>
-                      {doc.integrityCheck && (
-                        <Text style={styles.integrityDate}>
-                          Last checked: {formatDate(doc.integrityCheck.timestamp)}
+                <View style={styles.documentInfo}>
+                  <SafeIcon 
+                    name={getFileIcon(doc.type)} 
+                    size={24} 
+                    color={COLORS.primary} 
+                  />
+                  <View style={styles.documentDetails}>
+                    <Text style={styles.documentName}>{doc.originalName}</Text>
+                    <Text style={styles.documentMeta}>
+                      {formatFileSize(doc.size)} • {formatDate(doc.uploadedAt)}
+                    </Text>
+                    <Text style={styles.documentStatus}>
+                      {doc.processed ? 'Processed' : 'Pending Processing'}
+                    </Text>
+                    <View style={styles.documentMetadata}>
+                      {doc.platform && (
+                        <Text style={styles.platformTag}>
+                          {doc.platform === 'web' ? 'Web' : 'Mobile'}
                         </Text>
                       )}
+                      <IntegrityStatusChip document={doc} />
                     </View>
-                    <IconButton
-                      icon="arrow-right"
-                      size={20}
-                      onPress={() => navigation.navigate('PlanProcessing', { documentId: doc.id })}
-                    />
+                    {doc.integrityCheck && (
+                      <Text style={styles.integrityDate}>
+                        Last checked: {formatDate(doc.integrityCheck.timestamp)}
+                      </Text>
+                    )}
                   </View>
-
-                  {/* Delete Icon - Bottom Right */}
-                  <View style={styles.deleteContainer}>
-                    <IconButton
-                      icon="delete-outline"
-                      iconColor={doc.isPinned ? COLORS.disabled : "#F44336"}
-                      size={20}
-                      onPress={() => handleDeleteDocument(doc)}
-                      style={[
-                        styles.deleteIcon,
-                        doc.isPinned && styles.disabledIcon
-                      ]}
-                      disabled={doc.isPinned}
-                    />
-                  </View>
+                  <IconButton
+                    icon="arrow-right"
+                    size={20}
+                    onPress={() => navigation.navigate('PlanProcessing', { documentId: doc.id })}
+                  />
                 </View>
               </Card.Content>
             </Card>
           ))}
+        </View>
+      )}
+
+      {/* Show restore button when documents are hidden */}
+      {documents.length > 0 && !showDocuments && (
+        <View style={styles.documentsSection}>
+          <View style={styles.restoreContainer}>
+            <SafeIcon name="folder-open" size={48} color={COLORS.secondary} />
+            <Text style={styles.restoreText}>Uploaded plans view cleared</Text>
+            <Text style={styles.restoreSubtext}>
+              {documents.length} document{documents.length !== 1 ? 's' : ''} available in Document Library
+            </Text>
+            <Button
+              mode="outlined"
+              onPress={handleRestoreView}
+              style={styles.restoreButton}
+              icon="refresh"
+            >
+              Show Uploaded Plans
+            </Button>
+          </View>
         </View>
       )}
 
@@ -822,55 +647,53 @@ const styles = StyleSheet.create({
     color: COLORS.secondary,
     fontStyle: 'italic',
   },
+  webNotice: {
+    ...TEXT_STYLES.caption,
+    textAlign: 'center',
+    marginBottom: SPACING.md,
+    color: COLORS.primary,
+    fontStyle: 'italic',
+    backgroundColor: COLORS.surfaceVariant || '#f0f8ff',
+    padding: SPACING.sm,
+    borderRadius: 4,
+  },
   documentsSection: {
     padding: SPACING.md,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SPACING.md,
+  },
   sectionTitle: {
     ...TEXT_STYLES.h3,
-    marginBottom: SPACING.md,
+  },
+  clearAllButton: {
+    // No additional styles needed, TouchableOpacity handles the press
+  },
+  clearAllCard: {
+    backgroundColor: '#FFEBEE', // Light red background
+    borderColor: '#F44336',
+    borderWidth: 1,
+    minWidth: 100,
+  },
+  clearAllContent: {
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  clearAllText: {
+    ...TEXT_STYLES.caption,
+    color: '#F44336',
+    fontWeight: 'bold',
+    marginLeft: SPACING.xs,
   },
   documentCard: {
     marginBottom: SPACING.md,
     ...PlatformUtils.getPlatformStyles(),
-  },
-  documentContainer: {
-    position: 'relative',
-  },
-  favoriteContainer: {
-    position: 'absolute',
-    top: -8,
-    left: -8,
-    zIndex: 2,
-  },
-  favoriteIcon: {
-    margin: 0,
-    width: 32,
-    height: 32,
-  },
-  pinContainer: {
-    position: 'absolute',
-    top: -8,
-    right: -8,
-    zIndex: 2,
-  },
-  pinIcon: {
-    margin: 0,
-    width: 30,
-    height: 30,
-  },
-  deleteContainer: {
-    position: 'absolute',
-    bottom: -8,
-    right: -8,
-    zIndex: 2,
-  },
-  deleteIcon: {
-    margin: 0,
-    width: 32,
-    height: 32,
-  },
-  disabledIcon: {
-    opacity: 0.3,
   },
   documentInfo: {
     flexDirection: 'row',
@@ -928,6 +751,28 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: COLORS.secondary,
     marginTop: SPACING.xs / 2,
+  },
+  restoreContainer: {
+    alignItems: 'center',
+    padding: SPACING.xl,
+    backgroundColor: COLORS.surfaceVariant || '#f5f5f5',
+    borderRadius: 12,
+    margin: SPACING.md,
+  },
+  restoreText: {
+    ...TEXT_STYLES.subtitle,
+    marginTop: SPACING.md,
+    color: COLORS.secondary,
+  },
+  restoreSubtext: {
+    ...TEXT_STYLES.caption,
+    color: COLORS.secondary,
+    textAlign: 'center',
+    marginTop: SPACING.xs,
+    marginBottom: SPACING.md,
+  },
+  restoreButton: {
+    borderColor: COLORS.primary,
   },
   emptyState: {
     padding: SPACING.xl,

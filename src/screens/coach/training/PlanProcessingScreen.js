@@ -55,25 +55,24 @@ const PlanProcessingScreen = ({ navigation, route }) => {
     return () => backHandler.remove();
   }, [isComplete, navigation]);
 
-  const processDocument = async () => {
-    try {
-      setProgress(0.1);
-      setStatus('Loading document...');
+const processDocument = async () => {
+  try {
+    setProgress(0.1);
+    setStatus('Initializing...');
 
-      // Small delay for UI responsiveness
-      await new Promise(resolve => setTimeout(resolve, 500));
+    const { documentId, forceReprocess } = route.params || {};
 
-      setProgress(0.3);
-      setStatus('Extracting content...');
-      
-      // Small delay for UI responsiveness
-      await new Promise(resolve => setTimeout(resolve, 500));
+    // If force reprocess is enabled, bypass duplicate check
+    if (forceReprocess) {
+      console.log('Force reprocessing document:', documentId);
+      // You might want to add a timestamp or version to distinguish plans
+    }
 
-      setProgress(0.6);
-      setStatus('Processing training plan...');
-
-      // Process the document
-      const result = await DocumentProcessor.processTrainingPlan(documentId);
+    setProgress(0.3);
+    setStatus('Extracting content...');
+    
+    // Process the document (the duplicate check in processTrainingPlan will handle the rest)
+    const result = await DocumentProcessor.processTrainingPlan(documentId, { force: forceReprocess });
       
       setProgress(0.9);
       setStatus('Finalizing...');

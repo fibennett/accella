@@ -122,117 +122,307 @@ class DocumentProcessor {
   }
 
   // Platform-agnostic document selection
-  async selectDocument() {
-    try {
-      await this.ensureInitialized();
-      
-      PlatformUtils.logDebugInfo('Starting document selection');
-      
-      const result = await PlatformUtils.executePlatformSpecific(
-        () => this._selectDocumentWeb(),
-        () => this._selectDocumentMobile()
-      );
-      
-      if (!result) {
-        return null; // User cancelled
-      }
-
-      // Validate the selected file
-      const validation = this.validateFileForPlatform(result);
-      if (!validation.isValid) {
-        throw PlatformUtils.createError(
-          validation.errors.join(', '),
-          validation.suggestions
-        );
-      }
-
-      return result;
-    } catch (error) {
-      const platformError = PlatformUtils.handlePlatformError(error, 'Document Selection');
-      console.error('Document selection error:', platformError);
-      throw platformError;
+// In DocumentProcessor.js, find the selectDocument method and replace it:
+async selectDocument() {
+  try {
+    await this.ensureInitialized();
+    
+    PlatformUtils.logDebugInfo('Starting document selection');
+    
+    // Use the new user interaction method instead
+    const result = await PlatformUtils.executeUserInteraction(
+      () => this._selectDocumentWeb(),
+      () => this._selectDocumentMobile()
+    );
+    
+    if (!result) {
+      return null; // User cancelled
     }
+
+    // Validate the selected file
+    const validation = this.validateFileForPlatform(result);
+    if (!validation.isValid) {
+      throw PlatformUtils.createError(
+        validation.errors.join(', '),
+        validation.suggestions
+      );
+    }
+
+    return result;
+  } catch (error) {
+    const platformError = PlatformUtils.handlePlatformError(error, 'Document Selection');
+    console.error('Document selection error:', platformError);
+    throw platformError;
   }
+}
 
   // Web document selection using HTML input
-  async _selectDocumentWeb() {
-    return new Promise((resolve, reject) => {
-      try {
-        if (typeof document === 'undefined') {
-          reject(PlatformUtils.createError('Document API not available'));
-          return;
+// In DocumentProcessor.js, replace the _selectDocumentWeb method:
+async _selectDocumentWeb() {
+  return new Promise((resolve, reject) => {
+    try {
+      if (typeof document === 'undefined') {
+        reject(PlatformUtils.createError('Document API not available'));
+        return;
+      }
+
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = PlatformUtils.getFileInputAccept();
+      input.style.display = 'none';
+      
+      let resolved = false;
+
+      const cleanup = () => {
+        if (document.body.contains(input)) {
+          document.body.removeChild(input);
         }
+      };
 
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = PlatformUtils.getFileInputAccept();
-        input.style.display = 'none';
-        
-        let resolved = false;
+      const resolveOnce = (value) => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        resolve(value);
+      };
 
-        const cleanup = () => {
-          if (document.body.contains(input)) {
-            document.body.removeChild(input);
+      input.onchange = async (event) => {
+        try {
+          const file = event.target.files?.[0];
+          if (!file) {
+            resolveOnce(null);
+            return;
           }
-        };
 
-        input.onchange = async (event) => {
-          if (resolved) return;
-          resolved = true;
-
-          try {
-            const file = event.target.files?.[0];
-            if (!file) {
-              cleanup();
-              resolve(null);
-              return;
-            }
-
-            const result = {
-              uri: URL.createObjectURL(file),
-              type: file.type,
-              name: file.name,
-              size: file.size,
-              file: file
-            };
-            
-            PlatformUtils.logDebugInfo('Web file selected', {
-              name: file.name,
-              type: file.type,
-              size: file.size
-            });
-            
-            cleanup();
-            resolve(result);
-          } catch (error) {
-            cleanup();
-            reject(PlatformUtils.handlePlatformError(error, 'Web File Selection'));
-          }
-        };
-        
-        input.oncancel = input.onerror = () => {
-          if (resolved) return;
+          const result = {
+            uri: URL.createObjectURL(file),
+            type: file.type,
+            name: file.name,
+            size: file.size,
+            file: file
+          };
+          
+          PlatformUtils.logDebugInfo('Web file selected', {
+            name: file.name,
+            type: file.type,
+            size: file.size
+          });
+          
+          resolveOnce(result);
+        } catch (error) {
           resolved = true;
           cleanup();
-          resolve(null);
-        };
+          reject(PlatformUtils.handlePlatformError(error, 'Web File Selection'));
+        }
+      };
+      
+      input.oncancel = () => {
+        resolveOnce(null);
+      };
+      
+      document.body.appendChild(input);
+      
+      // Trigger the file dialog immediately
+      setTimeout(() => {
+        if (!resolved) {
+          input.click();
+        }
+      }, 10);
+      
+    } catch (error) {
+      reject(PlatformUtils.handlePlatformError(error, 'Web File Input Creation'));
+    }
+  });
+}
 
-        // Timeout fallback
-        setTimeout(() => {
-          if (!resolved) {
-            resolved = true;
-            cleanup();
-            resolve(null);
+// Add this method to the DocumentProcessor class in DocumentProcessor.js
+async scheduleIntegrityMaintenance() {
+  try {
+    // This method runs automatic maintenance checks on stored documents
+    const documents = await this.getStoredDocuments();
+    
+    if (documents.length === 0) {
+      PlatformUtils.logDebugInfo('No documents found for integrity maintenance');
+      return;
+    }
+    
+    let maintenanceResults = {
+      totalDocuments: documents.length,
+      checkedDocuments: 0,
+      issuesFound: 0,
+      repairsAttempted: 0,
+      timestamp: new Date().toISOString()
+    };
+    
+    // Check documents that haven't been checked recently
+    for (const document of documents) {
+      try {
+        // Skip recently checked documents (within last 24 hours)
+        if (document.integrityCheck && document.integrityCheck.timestamp) {
+          const lastCheck = new Date(document.integrityCheck.timestamp);
+          const hoursSinceCheck = (Date.now() - lastCheck.getTime()) / (1000 * 60 * 60);
+          
+          if (hoursSinceCheck < 24) {
+            continue; // Skip this document
           }
-        }, 60000); // 30 second timeout
+        }
         
-        document.body.appendChild(input);
-        input.click();
+        // Run integrity check
+        const integrityResult = await this.verifyFileIntegrity(document);
+        maintenanceResults.checkedDocuments++;
+        
+        if (integrityResult.overallStatus === 'failed' || integrityResult.overallStatus === 'error') {
+          maintenanceResults.issuesFound++;
+          
+          // Try to repair if possible
+          if (this.canRepairDocument(document)) {
+            try {
+              await this.repairDocumentIntegrity(document.id);
+              maintenanceResults.repairsAttempted++;
+            } catch (repairError) {
+              console.warn('Could not repair document:', document.id, repairError.message);
+            }
+          }
+        }
+        
+        // Update document with integrity check results
+        document.integrityCheck = {
+          timestamp: integrityResult.timestamp,
+          status: integrityResult.overallStatus,
+          lastChecked: new Date().toISOString()
+        };
+        
+        await this.updateDocumentMetadata(document);
+        
       } catch (error) {
-        reject(PlatformUtils.handlePlatformError(error, 'Web File Input Creation'));
+        console.warn('Integrity maintenance failed for document:', document.id, error.message);
       }
-    });
+    }
+    
+    PlatformUtils.logDebugInfo('Integrity maintenance completed', maintenanceResults);
+    return maintenanceResults;
+    
+  } catch (error) {
+    console.error('Integrity maintenance scheduling failed:', error);
+    // Don't throw - this is a background operation
+    return null;
   }
+}
+
+// Add these methods to the DocumentProcessor class
+
+// Check if a document can be repaired
+canRepairDocument(document) {
+  try {
+    // Basic checks for repairability
+    if (!document || !document.id) return false;
+    
+    // Web documents with missing webFileData usually can't be repaired
+    if (PlatformUtils.isWeb() && !document.webFileData) {
+      return false;
+    }
+    
+    // Mobile documents with missing local paths usually can't be repaired
+    if (PlatformUtils.isMobile() && !document.localPath) {
+      return false;
+    }
+    
+    // Check if the document type is supported for repair
+    const supportedTypes = [
+      'text/plain',
+      'text/csv',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ];
+    
+    return supportedTypes.includes(document.type);
+  } catch (error) {
+    return false;
+  }
+}
+
+// Repair document integrity issues
+async repairDocumentIntegrity(documentId) {
+  try {
+    const documents = await this.getStoredDocuments();
+    const document = documents.find(doc => doc.id === documentId);
+    
+    if (!document) {
+      throw PlatformUtils.createError('Document not found for repair');
+    }
+    
+    const repairActions = [];
+    let repaired = false;
+    
+    // Basic metadata repairs
+    if (!document.uploadedAt) {
+      document.uploadedAt = new Date().toISOString();
+      repairActions.push('Added missing upload timestamp');
+      repaired = true;
+    }
+    
+    if (!document.platform) {
+      document.platform = PlatformUtils.isWeb() ? 'web' : 'mobile';
+      repairActions.push('Added missing platform identifier');
+      repaired = true;
+    }
+    
+    if (typeof document.processed !== 'boolean') {
+      document.processed = false;
+      repairActions.push('Fixed missing processed flag');
+      repaired = true;
+    }
+    
+    // Platform-specific repairs
+    if (PlatformUtils.isWeb()) {
+      // Web-specific repairs
+      if (!document.webFileData && document.file) {
+        try {
+          // Try to restore file data if original file object still exists
+          const buffer = await document.file.arrayBuffer();
+          document.webFileData = Array.from(new Uint8Array(buffer));
+          repairActions.push('Restored missing web file data');
+          repaired = true;
+        } catch (error) {
+          repairActions.push('Could not restore web file data - file may need re-upload');
+        }
+      }
+    } else {
+      // Mobile-specific repairs
+      if (document.localPath && RNFS) {
+        try {
+          const exists = await RNFS.exists(document.localPath);
+          if (!exists) {
+            repairActions.push('Local file missing - document may need re-upload');
+          }
+        } catch (error) {
+          repairActions.push('Could not verify local file existence');
+        }
+      }
+    }
+    
+    // Update the document if repairs were made
+    if (repaired) {
+      document.repairedAt = new Date().toISOString();
+      await this.updateDocumentMetadata(document);
+    }
+    
+    // Run post-repair integrity check
+    const postRepairCheck = await this.verifyFileIntegrity(document);
+    
+    return {
+      repaired,
+      actions: repairActions,
+      postRepairStatus: postRepairCheck.overallStatus,
+      message: repaired 
+        ? `Document repaired successfully: ${repairActions.join(', ')}`
+        : 'No repairs needed or possible'
+    };
+    
+  } catch (error) {
+    throw PlatformUtils.handlePlatformError(error, 'Document Repair');
+  }
+}
 
   // Mobile document selection using expo-document-picker
   async _selectDocumentMobile() {
@@ -327,7 +517,9 @@ async _storeDocumentWeb(file) {
       platform: 'web',
       uri: file.uri,
       // Store as Uint8Array for better serialization
-      webFileData: Array.from(new Uint8Array(webFileData))
+      webFileData: Array.from(new Uint8Array(webFileData)),
+      // Keep reference to original file object (won't be serialized to AsyncStorage)
+      file: file.file
     };
     
     const existingDocs = await this.getStoredDocuments();
@@ -392,10 +584,18 @@ async _storeDocumentWeb(file) {
   }
 
   // Process training plan with enhanced error handling
-// Improved processTrainingPlan method with better error handling
 async processTrainingPlan(documentId) {
   try {
     await this.ensureInitialized();
+    
+    // Check if a training plan already exists for this document
+    const existingPlans = await this.getTrainingPlans();
+    const existingPlan = existingPlans.find(plan => plan.sourceDocument === documentId);
+    
+    if (existingPlan) {
+      console.log('Training plan already exists for document:', documentId);
+      return existingPlan; // Return existing plan instead of creating new one
+    }
     
     const documents = await this.getStoredDocuments();
     const document = documents.find(doc => doc.id === documentId);
@@ -500,17 +700,26 @@ async processTrainingPlan(documentId) {
     await this.saveTrainingPlan(trainingPlan);
     
     // Mark document as processed
-    document.processed = true;
-    document.processedAt = new Date().toISOString();
-    await this.updateDocumentMetadata(document);
+  document.processed = true;
+  document.processedAt = new Date().toISOString();
+  document.linkedTrainingPlanId = trainingPlan.id; // Add reference to created plan
+  await this.updateDocumentMetadata(document);
 
-    PlatformUtils.logDebugInfo('Training plan processed successfully', { 
-      planId: trainingPlan.id,
-      sessionsCount: trainingPlan.sessionsCount,
-      textLength: extractedText.length
-    });
+  PlatformUtils.logDebugInfo('Training plan processed successfully', { 
+    planId: trainingPlan.id,
+    sessionsCount: trainingPlan.sessionsCount,
+    textLength: extractedText.length,
+    documentAlreadyProcessed: false
+  });
 
-    return trainingPlan;
+  {doc.linkedTrainingPlanId && (
+  <View style={styles.processedIndicator}>
+    <Icon name="check-circle" size={16} color="#4CAF50" />
+    <Text style={styles.processedText}>Processed</Text>
+  </View>
+)}
+
+  return trainingPlan;
   } catch (error) {
     console.error('Error processing training plan:', error);
     throw PlatformUtils.handlePlatformError(error, 'Training Plan Processing');
@@ -914,15 +1123,22 @@ generateIntegrityRecommendations(checks) {
 }
 
 // 7. Enhanced storeDocument with integrity check
+// In DocumentProcessor.js, modify storeDocumentWithIntegrityCheck:
 async storeDocumentWithIntegrityCheck(file) {
   try {
-    console.log('Storing document with integrity check...');
+    console.log('Starting document storage with integrity check...');
     
     // Store the document first
     const document = await this.storeDocument(file);
+    console.log('Document stored successfully:', {
+      id: document.id,
+      name: document.originalName,
+      hasWebData: !!document.webFileData
+    });
     
     // Perform integrity check
     const integrityResult = await this.verifyFileIntegrity(document);
+    console.log('Integrity check completed:', integrityResult.overallStatus);
     
     // Add integrity info to document metadata
     document.integrityCheck = {
@@ -933,6 +1149,12 @@ async storeDocumentWithIntegrityCheck(file) {
     
     // Update document with integrity results
     await this.updateDocumentMetadata(document);
+    console.log('Document metadata updated with integrity results');
+    
+    // Verify the document was stored correctly
+    const storedDocs = await this.getStoredDocuments();
+    const foundDoc = storedDocs.find(doc => doc.id === document.id);
+    console.log('Verification - document found in storage:', !!foundDoc);
     
     // Return both document and integrity results
     return {
@@ -940,9 +1162,12 @@ async storeDocumentWithIntegrityCheck(file) {
       integrityResult
     };
   } catch (error) {
+    console.error('Error in storeDocumentWithIntegrityCheck:', error);
     throw PlatformUtils.handlePlatformError(error, 'Document Storage with Integrity Check');
   }
 }
+
+
 
   // Enhanced text extraction with better error handling
 // Enhanced text extraction with better error handling and web file support
@@ -1165,49 +1390,65 @@ async extractTextFile(document) {
   }
 
   // Keep all your existing parsing methods unchanged but add error handling
-  async parseTrainingPlanContent(text, document) {
-    try {
-      const lines = text.split('\n').filter(line => line.trim());
-      
-      if (lines.length === 0) {
-        throw PlatformUtils.createError('Document appears to be empty');
-      }
-      
-      // Get user info from storage or default
-      const userInfo = await this.getUserInfo();
-      
-      const trainingPlan = {
-        id: `plan_${Date.now()}`,
-        title: this.extractTitle(lines, document.originalName),
-        category: this.extractCategory(lines),
-        duration: this.extractDuration(lines),
-        difficulty: this.extractDifficulty(lines),
-        sessionsCount: this.extractSessionsCount(lines),
-        description: this.extractDescription(lines),
-        creator: userInfo.name || 'You',
-        rating: 0,
-        downloads: 0,
-        tags: this.extractTags(lines),
-        image: null,
-        isPublic: false,
-        isOwned: true,
-        progress: 0,
-        price: null,
-        
-        // Additional metadata
-        createdAt: new Date().toISOString(),
-        sourceDocument: document.id,
-        rawContent: text.substring(0, 10000), // Limit stored content
-        sessions: this.extractDetailedSessions(lines),
-        schedule: this.extractSchedule(lines),
-        platform: document.platform || (PlatformUtils.isWeb() ? 'web' : 'mobile')
-      };
-
-      return trainingPlan;
-    } catch (error) {
-      throw PlatformUtils.handlePlatformError(error, 'Training Plan Content Parsing');
+// In DocumentProcessor.js, find parseTrainingPlanContent and update it:
+// In DocumentProcessor.js, update parseTrainingPlanContent:
+async parseTrainingPlanContent(text, document, options = {}) {
+  try {
+    const lines = text.split('\n').filter(line => line.trim());
+    
+    if (lines.length === 0) {
+      throw PlatformUtils.createError('Document appears to be empty');
     }
+    
+    // Get enhanced user info
+    const userInfo = await this.getUserInfo();
+    const timestamp = Date.now();
+    
+    // Extract title that will serve as academy name
+    const extractedTitle = this.extractTitle(lines, document.originalName);
+    
+    const trainingPlan = {
+      id: `plan_${timestamp}`,
+      title: extractedTitle, // This becomes the academy name
+      academyName: extractedTitle, // Make this explicit
+      originalName: document.originalName, // FIXED: Store actual document name
+      sourceDocumentName: document.originalName, // Alternative field name
+      category: this.extractCategory(lines),
+      duration: this.extractDuration(lines),
+      difficulty: this.extractDifficulty(lines),
+      sessionsCount: this.extractSessionsCount(lines),
+      description: this.extractDescription(lines),
+      creator: userInfo.name || 'Coach', // Display name
+      creatorUsername: userInfo.username, // Actual username
+      creatorFirstName: userInfo.firstName,
+      creatorLastName: userInfo.lastName,
+      creatorProfileImage: userInfo.profileImage,
+      rating: 0,
+      downloads: 0,
+      tags: this.extractTags(lines),
+      image: null,
+      isPublic: false,
+      isOwned: true,
+      progress: 0,
+      price: null,
+      
+      // Additional metadata
+      version: options.force ? 2 : 1,
+      isReprocessed: !!options.force,
+      originalDocumentProcessedAt: document.processedAt || null,
+      createdAt: new Date().toISOString(),
+      sourceDocument: document.id,
+      rawContent: text.substring(0, 10000),
+      sessions: this.extractDetailedSessions(lines),
+      schedule: this.extractSchedule(lines),
+      platform: document.platform || (PlatformUtils.isWeb() ? 'web' : 'mobile')
+    };
+
+    return trainingPlan;
+  } catch (error) {
+    throw PlatformUtils.handlePlatformError(error, 'Training Plan Content Parsing');
   }
+}
 
   // Document validation specific to platform
   validateFileForPlatform(file) {
@@ -1509,21 +1750,49 @@ async extractTextFile(document) {
   }
 
   // Utility methods with enhanced error handling
-  async getUserInfo() {
-    try {
-      const userInfo = await AsyncStorage.getItem('user_profile');
-      if (userInfo) {
-        const parsed = JSON.parse(userInfo);
-        return {
-          name: `${parsed.firstName || 'Coach'} ${parsed.lastName || ''}`.trim()
-        };
-      }
-    } catch (error) {
-      console.log('Could not load user info:', error.message);
-    }
+// In DocumentProcessor.js, update the getUserInfo method:
+// In DocumentProcessor.js, update the getUserInfo method:
+async getUserInfo() {
+  try {
+    // Try multiple storage keys to find user data
+    const storageKeys = [
+      'authenticatedUser',
+      'user_data', 
+      'user_profile'
+    ];
     
-    return { name: 'Coach' };
+    for (const key of storageKeys) {
+      try {
+        const userInfo = await AsyncStorage.getItem(key);
+        if (userInfo) {
+          const parsed = JSON.parse(userInfo);
+          
+          return {
+            username: parsed.username || null,
+            firstName: parsed.firstName || null,
+            lastName: parsed.lastName || null,
+            fullName: `${parsed.firstName || ''} ${parsed.lastName || ''}`.trim() || null,
+            name: parsed.username || `${parsed.firstName || 'Coach'} ${parsed.lastName || ''}`.trim(),
+            profileImage: parsed.profileImage || null
+          };
+        }
+      } catch (error) {
+        continue; // Try next key
+      }
+    }
+  } catch (error) {
+    console.log('Could not load user info:', error.message);
   }
+  
+  return { 
+    username: null,
+    firstName: 'Coach',
+    lastName: '',
+    fullName: 'Coach',
+    name: 'Coach',
+    profileImage: null
+  };
+}
 
 // Fixed getStoredDocuments method
 async getStoredDocuments() {
