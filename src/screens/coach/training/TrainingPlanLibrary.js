@@ -96,21 +96,26 @@ const TrainingPlanLibrary = ({ navigation, route }) => {
   }, [route.params]);
 
   // MOVED: Define loadTrainingPlans function before it's used
-// In TrainingPlanLibrary.js, update the loadTrainingPlans method:
-// In TrainingPlanLibrary.js, update loadTrainingPlans:
 const loadTrainingPlans = useCallback(async () => {
   try {
     setLoading(true);
     const realPlans = await DocumentProcessor.getTrainingPlans();
+    const storedDocuments = await DocumentProcessor.getStoredDocuments();
     
-    // Enhance plans with proper structure and ensure original name is preserved
-    const enhancedPlans = realPlans.map(plan => ({
-      ...plan,
-      academyName: plan.academyName || plan.title,
-      originalName: plan.originalName || plan.sourceDocumentName || 'Training Document',
-      creator: plan.creatorUsername || plan.creator || 'Coach',
-      creatorUsername: plan.creatorUsername || plan.creator,
-    }));
+    // Enhance plans with proper structure and resolve document names
+    const enhancedPlans = realPlans.map(plan => {
+      // Try to find the source document to get the actual name
+      const sourceDoc = storedDocuments.find(doc => doc.id === plan.sourceDocument);
+      
+      return {
+        ...plan,
+        academyName: plan.academyName || plan.title,
+        // FIXED: Use the actual source document name
+        originalName: sourceDoc?.originalName || plan.originalName || plan.sourceDocumentName || `Document-${plan.sourceDocument?.slice(-8) || 'Unknown'}`,
+        creator: plan.creatorUsername || plan.creator || 'Coach',
+        creatorUsername: plan.creatorUsername || plan.creator,
+      };
+    });
     
     setPlans(enhancedPlans);
     
@@ -276,23 +281,26 @@ const renderPlanCard = ({ item: plan, index }) => {
                   )}
                 </View>
                 
-                {/* Creator and Duration Row - Use username */}
+                {/* Creator and Duration Row */}
                 <Text style={[TEXT_STYLES.caption, { color: 'rgba(255,255,255,0.8)', marginBottom: SPACING.xs }]}>
                   {plan.creatorUsername || plan.creator} • {plan.duration}
                 </Text>
                 
-                {/* FIXED: Show actual source document name */}
+                {/* FIXED: Show actual source document name with better fallback logic */}
                 <Text style={[TEXT_STYLES.caption, { 
                   color: 'rgba(255,255,255,0.7)', 
                   fontStyle: 'italic',
                   fontSize: 11,
                   lineHeight: 14
                 }]}>
-                  ({plan.originalName || plan.sourceDocumentName || 'Training Document'})
+                  {/* Try multiple sources for the document name, with better logic */}
+                  ({plan.originalName || 
+                    plan.sourceDocumentName || 
+                    (plan.sourceDocument ? `Document ${plan.sourceDocument.slice(-8)}` : 'Imported Document')})
                 </Text>
               </View>
               
-              {/* Rest of the card content remains the same */}
+              {/* Ownership indicator */}
               <View style={{ alignItems: 'flex-end' }}>
                 {plan.isOwned ? (
                   <Icon name="check-circle" size={24} color="white" />
@@ -304,7 +312,7 @@ const renderPlanCard = ({ item: plan, index }) => {
               </View>
             </View>
             
-            {/* Rest of gradient content remains unchanged */}
+            {/* Difficulty and rating row */}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <Chip
                 mode="flat"
@@ -325,7 +333,7 @@ const renderPlanCard = ({ item: plan, index }) => {
             </View>
           </LinearGradient>
 
-          {/* Rest of your existing Card.Content - keep unchanged */}
+          {/* Card content remains the same */}
           <Card.Content style={{ padding: SPACING.md }}>
             <Text style={[TEXT_STYLES.body2, { marginBottom: SPACING.sm, color: COLORS.textSecondary }]}>
               {plan.description}

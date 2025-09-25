@@ -1390,8 +1390,7 @@ async extractTextFile(document) {
   }
 
   // Keep all your existing parsing methods unchanged but add error handling
-// In DocumentProcessor.js, find parseTrainingPlanContent and update it:
-// In DocumentProcessor.js, update parseTrainingPlanContent:
+// In DocumentProcessor.js, ensure the parseTrainingPlanContent method properly stores document names:
 async parseTrainingPlanContent(text, document, options = {}) {
   try {
     const lines = text.split('\n').filter(line => line.trim());
@@ -1411,8 +1410,12 @@ async parseTrainingPlanContent(text, document, options = {}) {
       id: `plan_${timestamp}`,
       title: extractedTitle, // This becomes the academy name
       academyName: extractedTitle, // Make this explicit
-      originalName: document.originalName, // FIXED: Store actual document name
-      sourceDocumentName: document.originalName, // Alternative field name
+      
+      // FIXED: Ensure all possible document name fields are populated
+      originalName: document.originalName, // This is the actual uploaded file name
+      sourceDocumentName: document.originalName, // Backup field
+      documentFileName: document.originalName, // Additional backup
+      
       category: this.extractCategory(lines),
       duration: this.extractDuration(lines),
       difficulty: this.extractDifficulty(lines),
@@ -1437,11 +1440,20 @@ async parseTrainingPlanContent(text, document, options = {}) {
       isReprocessed: !!options.force,
       originalDocumentProcessedAt: document.processedAt || null,
       createdAt: new Date().toISOString(),
-      sourceDocument: document.id,
+      sourceDocument: document.id, // This links back to the document
       rawContent: text.substring(0, 10000),
       sessions: this.extractDetailedSessions(lines),
       schedule: this.extractSchedule(lines),
-      platform: document.platform || (PlatformUtils.isWeb() ? 'web' : 'mobile')
+      platform: document.platform || (PlatformUtils.isWeb() ? 'web' : 'mobile'),
+      
+      // Debug information to help troubleshoot
+      debugInfo: {
+        documentId: document.id,
+        documentOriginalName: document.originalName,
+        documentType: document.type,
+        extractedTitle: extractedTitle,
+        createdAt: new Date().toISOString()
+      }
     };
 
     return trainingPlan;

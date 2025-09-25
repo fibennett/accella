@@ -100,10 +100,19 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
   const [platformReady, setPlatformReady] = useState(false);
   const [integrityResult, setIntegrityResult] = useState(null);
   const [showDocuments, setShowDocuments] = useState(true);
+  const [clearedDocuments, setClearedDocuments] = useState(new Set());
+  const [allStoredDocuments, setAllStoredDocuments] = useState([]);
 
+  
   useEffect(() => {
     initializePlatform();
   }, []);
+
+  useEffect(() => {
+    if (platformReady) {
+      loadDocuments();
+    }
+  }, [clearedDocuments, platformReady]);
 
   const initializePlatform = async () => {
     try {
@@ -129,27 +138,30 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
     }
   };
 
-  const loadDocuments = async () => {
-    try {
-      console.log('Loading documents from storage...');
-      const docs = await DocumentProcessor.getStoredDocuments();
-      console.log('Documents loaded:', {
-        count: docs.length,
-        documents: docs.map(doc => ({
-          id: doc.id,
-          name: doc.originalName,
-          size: doc.size,
-          hasWebData: !!doc.webFileData,
-          platform: doc.platform
-        }))
-      });
-      setDocuments(docs);
-    } catch (error) {
-      console.error('Error loading documents:', error);
-      const platformError = PlatformUtils.handlePlatformError(error, 'Document Loading');
-      Alert.alert('Error', platformError.message);
-    }
-  };
+const loadDocuments = async () => {
+  try {
+    console.log('Loading documents from storage...');
+    const docs = await DocumentProcessor.getStoredDocuments();
+    
+    // Store all documents for reference
+    setAllStoredDocuments(docs);
+    
+    // Filter out cleared documents for display
+    const filteredDocs = docs.filter(doc => !clearedDocuments.has(doc.id));
+    
+    console.log('Documents loaded:', {
+      count: filteredDocs.length,
+      total: docs.length,
+      cleared: docs.length - filteredDocs.length
+    });
+    
+    setDocuments(filteredDocs);
+  } catch (error) {
+    console.error('Error loading documents:', error);
+    const platformError = PlatformUtils.handlePlatformError(error, 'Document Loading');
+    Alert.alert('Error', platformError.message);
+  }
+};
 
   const handleDocumentUpload = async () => {
     try {
@@ -262,22 +274,47 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
     );
   };
 
-  const handleClearUploadedPlans = () => {
-    Alert.alert(
-      'Clear Uploaded Plans View',
-      'This will clear the uploaded plans from this screen but keep them in storage. You can still access them from the Document Library.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear View',
-          style: 'default',
-          onPress: () => {
-            setShowDocuments(false);
-          }
+const handleClearUploadedPlans = () => {
+  Alert.alert(
+    'Clear Upload History',
+    'This will clear the uploaded plans from this screen but keep them in storage. You can still access them from the Document Library.',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Clear History',
+        style: 'default',
+        onPress: () => {
+          console.log('Clearing documents:', documents.map(doc => doc.id));
+          // Mark all currently visible documents as cleared
+          const documentIds = documents.map(doc => doc.id);
+          const newClearedSet = new Set([...clearedDocuments, ...documentIds]);
+          console.log('New cleared documents:', Array.from(newClearedSet));
+          setClearedDocuments(newClearedSet);
         }
-      ]
-    );
-  };
+      }
+    ]
+  );
+};
+
+const handleRestoreDocuments = () => {
+  const clearedCount = clearedDocuments.size;
+  
+  Alert.alert(
+    'Restore Upload History',
+    `This will restore ${clearedCount} previously cleared document${clearedCount !== 1 ? 's' : ''} to the upload history.`,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Restore All',
+        style: 'default',
+        onPress: () => {
+          console.log('Restoring all cleared documents');
+          setClearedDocuments(new Set()); // Clear the cleared documents set
+        }
+      }
+    ]
+  );
+};
 
   const handleRestoreView = () => {
     setShowDocuments(true);
@@ -329,7 +366,8 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
       'security': '🔒',
       'clear-all': '🗑️',
       'folder-open': '📂',
-      'refresh': '🔄'
+      'refresh': '🔄',
+      'restore': '↩️'
     };
     return (
       <Text style={[{ fontSize: size, color }, style]}>
@@ -479,17 +517,65 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
         <View style={styles.documentsSection}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Uploaded Plans</Text>
-            <TouchableOpacity 
-              onPress={handleClearUploadedPlans}
-              style={styles.clearAllButton}
-            >
-              <Card style={styles.clearAllCard}>
-                <Card.Content style={styles.clearAllContent}>
-                  <SafeIcon name="clear-all" size={20} color="#F44336" />
-                  <Text style={styles.clearAllText}>Clear All</Text>
-                </Card.Content>
-              </Card>
-            </TouchableOpacity>
+            <View style={styles.actionButtonsContainer}>
+              {/* Restore Button - always show but disabled when no cleared documents */}
+              <TouchableOpacity 
+                onPress={clearedDocuments.size > 0 ? handleRestoreDocuments : null}
+                style={[
+                  styles.restoreAllButton, 
+                  clearedDocuments.size === 0 && styles.disabledButton
+                ]}
+                disabled={clearedDocuments.size === 0}
+              >
+                <Card style={[
+                  styles.restoreAllCard,
+                  clearedDocuments.size === 0 && styles.disabledCard
+                ]}>
+                  <Card.Content style={styles.actionButtonContent}>
+                    <SafeIcon 
+                      name="restore" 
+                      size={16} 
+                      color={clearedDocuments.size > 0 ? "#2196F3" : "#BDBDBD"} 
+                    />
+                    <Text style={[
+                      styles.restoreAllText,
+                      clearedDocuments.size === 0 && styles.disabledText
+                    ]}>
+                      Restore {clearedDocuments.size > 0 ? `(${clearedDocuments.size})` : ''}
+                    </Text>
+                  </Card.Content>
+                </Card>
+              </TouchableOpacity>
+              
+              {/* Clear All Button - enabled when there are visible documents */}
+              <TouchableOpacity 
+                onPress={handleClearUploadedPlans}
+                style={[
+                  styles.clearAllButton,
+                  documents.length === 0 && styles.disabledButton
+                ]}
+                disabled={documents.length === 0}
+              >
+                <Card style={[
+                  styles.clearAllCard,
+                  documents.length === 0 && styles.disabledCard
+                ]}>
+                  <Card.Content style={styles.actionButtonContent}>
+                    <SafeIcon 
+                      name="clear-all" 
+                      size={16} 
+                      color={documents.length > 0 ? "#F44336" : "#BDBDBD"} 
+                    />
+                    <Text style={[
+                      styles.clearAllText,
+                      documents.length === 0 && styles.disabledText
+                    ]}>
+                      Clear All {documents.length > 0 ? `(${documents.length})` : ''}
+                    </Text>
+                  </Card.Content>
+                </Card>
+              </TouchableOpacity>
+            </View>
           </View>
           
           {documents.map((doc) => (
@@ -535,34 +621,41 @@ const CoachingPlanUploadScreen = ({ navigation }) => {
         </View>
       )}
 
-      {/* Show restore button when documents are hidden */}
-      {documents.length > 0 && !showDocuments && (
+      {/* Show empty state or cleared documents info */}
+      {documents.length === 0 && (
         <View style={styles.documentsSection}>
-          <View style={styles.restoreContainer}>
-            <SafeIcon name="folder-open" size={48} color={COLORS.secondary} />
-            <Text style={styles.restoreText}>Uploaded plans view cleared</Text>
-            <Text style={styles.restoreSubtext}>
-              {documents.length} document{documents.length !== 1 ? 's' : ''} available in Document Library
-            </Text>
-            <Button
-              mode="outlined"
-              onPress={handleRestoreView}
-              style={styles.restoreButton}
-              icon="refresh"
-            >
-              Show Uploaded Plans
-            </Button>
-          </View>
-        </View>
-      )}
-
-      {documents.length === 0 && !uploading && (
-        <View style={styles.emptyState}>
-          <SafeIcon name="description" size={64} color={COLORS.secondary} />
-          <Text style={styles.emptyText}>No coaching plans uploaded yet</Text>
-          <Text style={styles.emptySubtext}>
-            Upload your first training plan with automatic integrity verification
-          </Text>
+          {clearedDocuments.size > 0 ? (
+            // Show cleared documents info
+            <View style={styles.restoreContainer}>
+              <SafeIcon name="folder-open" size={48} color={COLORS.secondary} />
+              <Text style={styles.restoreText}>All uploaded plans cleared</Text>
+              <Text style={styles.restoreSubtext}>
+                {clearedDocuments.size} document{clearedDocuments.size !== 1 ? 's' : ''} cleared from view
+              </Text>
+              <TouchableOpacity 
+                onPress={handleRestoreDocuments}
+                style={styles.restoreButtonContainer}
+              >
+                <Card style={styles.restoreCard}>
+                  <Card.Content style={styles.restoreCardContent}>
+                    <SafeIcon name="restore" size={20} color="#2196F3" />
+                    <Text style={styles.restoreCardText}>
+                      Restore All Documents
+                    </Text>
+                  </Card.Content>
+                </Card>
+              </TouchableOpacity>
+            </View>
+          ) : !uploading ? (
+            // Show empty state
+            <View style={styles.emptyState}>
+              <SafeIcon name="description" size={64} color={COLORS.secondary} />
+              <Text style={styles.emptyText}>No coaching plans uploaded yet</Text>
+              <Text style={styles.emptySubtext}>
+                Upload your first training plan with automatic integrity verification
+              </Text>
+            </View>
+          ) : null}
         </View>
       )}
     </ScrollView>
@@ -669,8 +762,26 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...TEXT_STYLES.h3,
   },
+  actionButtonsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
   clearAllButton: {
     // No additional styles needed, TouchableOpacity handles the press
+  },
+  restoreAllButton: {
+    // No additional styles needed, TouchableOpacity handles the press
+  },
+  disabledButton: {
+    opacity: 0.6,
+  },
+  actionButtonContent: {
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   clearAllCard: {
     backgroundColor: '#FFEBEE', // Light red background
@@ -678,18 +789,32 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     minWidth: 100,
   },
-  clearAllContent: {
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.sm,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+  restoreAllCard: {
+    backgroundColor: '#E3F2FD', // Light blue background
+    borderColor: '#2196F3',
+    borderWidth: 1,
+    minWidth: 100,
+  },
+  disabledCard: {
+    backgroundColor: '#F5F5F5', // Light gray background for disabled
+    borderColor: '#BDBDBD', // Gray border for disabled
   },
   clearAllText: {
     ...TEXT_STYLES.caption,
     color: '#F44336',
     fontWeight: 'bold',
     marginLeft: SPACING.xs,
+    fontSize: 12,
+  },
+  restoreAllText: {
+    ...TEXT_STYLES.caption,
+    color: '#2196F3',
+    fontWeight: 'bold',
+    marginLeft: SPACING.xs,
+    fontSize: 12,
+  },
+  disabledText: {
+    color: '#BDBDBD', // Gray text for disabled state
   },
   documentCard: {
     marginBottom: SPACING.md,
@@ -769,10 +894,29 @@ const styles = StyleSheet.create({
     color: COLORS.secondary,
     textAlign: 'center',
     marginTop: SPACING.xs,
-    marginBottom: SPACING.md,
+    marginBottom: SPACING.lg,
   },
-  restoreButton: {
-    borderColor: COLORS.primary,
+  restoreButtonContainer: {
+    // Container for the restore button
+  },
+  restoreCard: {
+    backgroundColor: '#E3F2FD',
+    borderColor: '#2196F3',
+    borderWidth: 2,
+    elevation: 2,
+  },
+  restoreCardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+  },
+  restoreCardText: {
+    ...TEXT_STYLES.body,
+    color: '#2196F3',
+    fontWeight: 'bold',
+    marginLeft: SPACING.sm,
   },
   emptyState: {
     padding: SPACING.xl,
