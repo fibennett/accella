@@ -452,7 +452,7 @@ const handleRestoreDocuments = () => {
         <Text style={styles.uploadTitle}>Select Your Coaching Plan</Text>
         <Text style={styles.uploadSubtitle}>
           {PlatformUtils.isWeb() 
-            ? 'Supported formats: Word, Excel, CSV, TXT (Max 5MB)'
+            ? 'Supported formats: PDF, Word, Excel, CSV, TXT (Max 5MB)'
             : 'Supported formats: PDF, Word, Excel, CSV (Max 10MB)'
           }
         </Text>

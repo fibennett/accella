@@ -2,15 +2,29 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import PlatformUtils from '../utils/PlatformUtils';
+import PDFProcessor from './PDFProcessor';
 
 // Safe module variables - initialized to null
 let DocumentPicker = null;
 let RNFS = null;
 let mammoth = null;
 let XLSX = null;
-
-// Safe initialization flag
+//let PDFProcessor = null;
 let modulesInitialized = false;
+
+// Initialize PDF processor safely
+const initializePDFProcessor = () => {
+  try {
+    if (!PDFProcessor) {
+      // Use require instead of dynamic import to avoid Metro issues
+      PDFProcessor = require('./PDFProcessor').default;
+    }
+    return PDFProcessor;
+  } catch (error) {
+    console.warn('PDFProcessor not available:', error.message);
+    return null;
+  }
+};
 
 // Safe module initialization that won't crash the app
 const initializePlatformModules = async () => {
@@ -646,39 +660,89 @@ async processTrainingPlan(documentId) {
     });
 
     // Extract text content based on file type
-    let extractedText = '';
-    const fileType = document.type.toLowerCase();
-    
-    try {
-      if (fileType.includes('word') || fileType.includes('document')) {
-        extractedText = await this.extractWordText(document);
-      } else if (fileType.includes('excel') || fileType.includes('sheet')) {
-        extractedText = await this.extractExcelText(document);
-      } else if (fileType.includes('csv')) {
-        extractedText = await this.extractCSVText(document);
-      } else if (fileType.includes('text') || fileType.includes('plain')) {
-        extractedText = await this.extractTextFile(document);
-      } else if (fileType.includes('pdf')) {
-        if (!PlatformUtils.isFeatureSupported('pdfProcessing')) {
+      let extractedText = '';
+      const fileType = document.type.toLowerCase();
+      const fileName = document.originalName.toLowerCase();
+
+      try {
+        // Improve file type detection
+        if (fileType.includes('word') || fileType.includes('document') || 
+            (fileType.includes('officedocument.wordprocessingml') && !fileType.includes('spreadsheet'))) {
+          extractedText = await this.extractWordText(document);
+        } else if (fileType.includes('excel') || fileType.includes('sheet') || 
+                  fileType.includes('spreadsheetml') || fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+          extractedText = await this.extractExcelText(document);
+        } else if (fileType.includes('csv') || fileName.endsWith('.csv')) {
+          extractedText = await this.extractCSVText(document);
+        } else if (fileType.includes('text') || fileType.includes('plain') || fileName.endsWith('.txt')) {
+          extractedText = await this.extractTextFile(document);
+        } else if (fileType.includes('pdf') || fileName.endsWith('.pdf')) {
+            const pdfProcessor = initializePDFProcessor();
+            
+            if (!pdfProcessor) {
+              // Provide helpful fallback message
+              extractedText = `
+          PDF Processing Not Available
+          ===========================
+
+          Your PDF document "${document.originalName}" cannot be processed directly.
+
+          Please convert your PDF to one of these supported formats:
+          • Word Document (.docx) - Recommended
+          • Text File (.txt)
+          • CSV File (.csv)
+
+          How to convert:
+          1. Open your PDF in Microsoft Word or Google Docs
+          2. Use File > Save As and select .docx format
+          3. Upload the converted file
+
+          This ensures your training plan can be properly processed and analyzed.
+              `.trim();
+            } else {
+              try {
+                // Validate PDF before processing
+                const validation = await pdfProcessor.validatePDFDocument(document);
+                if (!validation.isValid) {
+                  throw PlatformUtils.createError(
+                    `PDF validation failed: ${validation.errors.join(', ')}`,
+                    validation.suggestions
+                  );
+                }
+                
+                extractedText = await pdfProcessor.extractTextFromPDF(document);
+              } catch (pdfError) {
+                console.warn('PDF processing failed, using fallback:', pdfError.message);
+                extractedText = `
+          PDF Processing Error
+          ===================
+
+          Unable to process "${document.originalName}" automatically.
+
+          Error: ${pdfError.message}
+
+          Please try:
+          1. Converting to Word (.docx) format
+          2. Copying text to a .txt file
+          3. Using the web version for better PDF support
+
+          Your training plan data is important - please convert to a supported format for best results.
+                `.trim();
+              }
+            }
+          } else {
           throw PlatformUtils.createError(
-            'PDF processing not supported on this platform',
-            ['Use Word (.docx) or text (.txt) files instead']
+            `Unsupported file type: ${document.type}`,
+            [
+              'Use supported formats: .docx, .xlsx, .csv, .txt',
+              'Convert your file to a supported format'
+            ]
           );
         }
-        extractedText = await this.extractPDFText(document);
-      } else {
-        throw PlatformUtils.createError(
-          `Unsupported file type: ${document.type}`,
-          [
-            'Use supported formats: .docx, .xlsx, .csv, .txt',
-            'Convert your file to a supported format'
-          ]
-        );
+      } catch (extractionError) {
+        console.error('Text extraction failed:', extractionError);
+        throw extractionError;
       }
-    } catch (extractionError) {
-      console.error('Text extraction failed:', extractionError);
-      throw extractionError; // Re-throw with original context
-    }
 
     if (!extractedText || extractedText.trim().length === 0) {
       throw PlatformUtils.createError(
@@ -1267,9 +1331,11 @@ async extractExcelText(document) {
       const storedDoc = documents.find(doc => doc.id === document.id);
       
       if (storedDoc && storedDoc.webFileData) {
-        buffer = storedDoc.webFileData;
+        // Fix: Convert array back to Uint8Array
+        buffer = new Uint8Array(storedDoc.webFileData);
       } else if (document.file) {
         buffer = await document.file.arrayBuffer();
+        buffer = new Uint8Array(buffer);
       } else {
         throw PlatformUtils.createError('Web file not accessible - file data may have been cleared');
       }
@@ -1281,6 +1347,7 @@ async extractExcelText(document) {
       buffer = Buffer.from(base64Data, 'base64');
     }
     
+    // Use 'array' type for web Uint8Array, 'buffer' for mobile Buffer
     const workbook = XLSX.read(buffer, { 
       type: PlatformUtils.isWeb() ? 'array' : 'buffer' 
     });
@@ -1320,8 +1387,10 @@ async extractCSVText(document) {
       const storedDoc = documents.find(doc => doc.id === document.id);
       
       if (storedDoc && storedDoc.webFileData) {
+        // Fix: Convert array back to Uint8Array then to ArrayBuffer
+        const uint8Array = new Uint8Array(storedDoc.webFileData);
         const decoder = new TextDecoder('utf-8');
-        text = decoder.decode(storedDoc.webFileData);
+        text = decoder.decode(uint8Array);
       } else if (document.file) {
         text = await document.file.text();
       } else {
@@ -1353,8 +1422,10 @@ async extractTextFile(document) {
       const storedDoc = documents.find(doc => doc.id === document.id);
       
       if (storedDoc && storedDoc.webFileData) {
+        // Fix: Convert array back to Uint8Array then decode
+        const uint8Array = new Uint8Array(storedDoc.webFileData);
         const decoder = new TextDecoder('utf-8');
-        text = decoder.decode(storedDoc.webFileData);
+        text = decoder.decode(uint8Array);
       } else if (document.file) {
         text = await document.file.text();
       } else {
@@ -1376,18 +1447,6 @@ async extractTextFile(document) {
     throw PlatformUtils.handlePlatformError(error, 'Text File Extraction');
   }
 }
-
-  // PDF extraction placeholder
-  async extractPDFText(document) {
-    throw PlatformUtils.createError(
-      'PDF text extraction not yet implemented',
-      [
-        'Use Word (.docx) files instead',
-        'Convert PDF to Word format first',
-        'Save as text (.txt) file'
-      ]
-    );
-  }
 
   // Keep all your existing parsing methods unchanged but add error handling
 // In DocumentProcessor.js, ensure the parseTrainingPlanContent method properly stores document names:
@@ -1463,45 +1522,42 @@ async parseTrainingPlanContent(text, document, options = {}) {
 }
 
   // Document validation specific to platform
-  validateFileForPlatform(file) {
-    const errors = [];
-    
-    // Basic validation
-    if (!file || !file.size || !file.type || !file.name) {
-      errors.push('Invalid file data');
-      return { isValid: false, errors, suggestions: ['Select a valid file'] };
-    }
-    
-    // Size validation
-    if (file.size > this.fileSizeLimit) {
-      errors.push(`File size exceeds ${Math.round(this.fileSizeLimit / 1024 / 1024)}MB limit`);
-    }
-    
-    // Type validation
-    if (!this.supportedFormats.includes(file.type)) {
-      errors.push(`Unsupported file type: ${file.type}`);
-    }
-    
-    // Platform-specific validations
-    if (PlatformUtils.isWeb()) {
-      if (file.type === 'application/pdf') {
-        errors.push('PDF processing not supported on web platform');
-      }
-      if (file.size > 5 * 1024 * 1024) {
-        errors.push('File too large for web platform (5MB limit)');
-      }
-    }
-    
-    return {
-      isValid: errors.length === 0,
-      errors: errors,
-      suggestions: errors.length > 0 ? [
-        'Use supported file formats (.docx, .xlsx, .csv, .txt)',
-        `Keep file size under ${Math.round(this.fileSizeLimit / 1024 / 1024)}MB`,
-        'Try compressing the file if it\'s too large'
-      ] : []
-    };
+validateFileForPlatform(file) {
+  const errors = [];
+  
+  // Basic validation
+  if (!file || !file.size || !file.type || !file.name) {
+    errors.push('Invalid file data');
+    return { isValid: false, errors, suggestions: ['Select a valid file'] };
   }
+  
+  // Size validation
+  if (file.size > this.fileSizeLimit) {
+    errors.push(`File size exceeds ${Math.round(this.fileSizeLimit / 1024 / 1024)}MB limit`);
+  }
+  
+  // Type validation
+  if (!this.supportedFormats.includes(file.type)) {
+    errors.push(`Unsupported file type: ${file.type}`);
+  }
+  
+  // Platform-specific validations - REMOVE PDF blocking for web
+  if (PlatformUtils.isWeb()) {
+    if (file.size > 5 * 1024 * 1024) {
+      errors.push('File too large for web platform (5MB limit)');
+    }
+  }
+  
+  return {
+    isValid: errors.length === 0,
+    errors: errors,
+    suggestions: errors.length > 0 ? [
+      'Use supported file formats (.docx, .xlsx, .csv, .txt, .pdf)',
+      `Keep file size under ${Math.round(this.fileSizeLimit / 1024 / 1024)}MB`,
+      'Try compressing the file if it\'s too large'
+    ] : []
+  };
+}
 
   // All your existing extraction methods remain the same
   extractTitle(lines, filename) {

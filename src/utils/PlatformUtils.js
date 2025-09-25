@@ -240,24 +240,24 @@ class PlatformUtils {
     return this.isWeb() ? 5 * 1024 * 1024 : 10 * 1024 * 1024; // 5MB web, 10MB mobile
   }
 
-  // Get platform-specific supported formats
-  static getSupportedFormats() {
-    const baseFormats = [
-      'text/plain',
-      'text/csv',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    ];
+    // Update the method to properly include PDF for both platforms:
+    static getSupportedFormats() {
+      const baseFormats = [
+        'text/plain',
+        'text/csv',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/pdf'  // Now properly supported on both platforms
+      ];
 
-    if (this.isMobile()) {
-      baseFormats.push(
-        'application/pdf',
-        'application/vnd.ms-excel'
-      );
+      if (this.isMobile()) {
+        baseFormats.push(
+          'application/vnd.ms-excel'
+        );
+      }
+
+      return baseFormats;
     }
-
-    return baseFormats;
-  }
 
   // Enhanced error creation with platform context and integrity check support
   static createError(message, suggestions = [], errorType = 'general', metadata = {}) {
@@ -320,7 +320,7 @@ class PlatformUtils {
       wordProcessing: true,
       excelProcessing: true,
       csvProcessing: true,
-      pdfProcessing: false, // Requires additional web library
+      pdfProcessing: true,
       localFileSystem: false,
       nativeFilePicker: false,
       backgroundProcessing: false,
@@ -353,6 +353,17 @@ class PlatformUtils {
       return mobileSupported[feature] || false;
     }
   }
+
+  // Add this new method to PlatformUtils:
+static async loadPDFProcessor() {
+  try {
+    const PDFProcessor = await import('../services/PDFProcessor');
+    return PDFProcessor.default;
+  } catch (error) {
+    console.warn('PDFProcessor not available:', error.message);
+    return null;
+  }
+}
 
   // Get platform-appropriate loading messages
   static getLoadingMessage(operation) {

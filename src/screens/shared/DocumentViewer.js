@@ -162,7 +162,7 @@ useEffect(() => {
     const name = document.originalName ? document.originalName.toLowerCase() : '';
     
     const typeMap = {
-      pdf: ['pdf'],
+      pdf: ['pdf', 'application/pdf'],
       word: ['doc', 'docx', 'odt', 'rtf'],
       excel: ['xls', 'xlsx', 'ods', 'csv'],
       powerpoint: ['ppt', 'pptx', 'odp'],
