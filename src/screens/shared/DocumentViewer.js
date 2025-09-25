@@ -157,23 +157,24 @@ useEffect(() => {
   const appStateRef = useRef(AppState.currentState);
 
   // File type detection with enhanced categorization
-getDocumentFormat(document) {
-  const type = document.type?.toLowerCase() || '';
-  const name = document.originalName?.toLowerCase() || '';
-  
-  // Priority order: MIME type first, then extension
-  if (type.includes('pdf') || name.endsWith('.pdf')) return 'pdf';
-  if (type.includes('word') || type.includes('document') || name.endsWith('.docx') || name.endsWith('.doc')) return 'word';
-  if (type.includes('excel') || type.includes('sheet') || name.endsWith('.xlsx') || name.endsWith('.xls')) return 'excel';
-  if (type.includes('csv') || name.endsWith('.csv')) return 'csv';
-  if (type.includes('text') || type.includes('plain') || name.endsWith('.txt')) return 'text';
-  
-  return 'unknown';
-}
+// File type detection with enhanced categorization
+  const getDocumentFormat = (document) => {
+    const type = document.type?.toLowerCase() || '';
+    const name = document.originalName?.toLowerCase() || '';
+    
+    // Priority order: MIME type first, then extension
+    if (type.includes('pdf') || name.endsWith('.pdf')) return 'pdf';
+    if (type.includes('word') || type.includes('document') || name.endsWith('.docx') || name.endsWith('.doc')) return 'word';
+    if (type.includes('excel') || type.includes('sheet') || name.endsWith('.xlsx') || name.endsWith('.xls')) return 'excel';
+    if (type.includes('csv') || name.endsWith('.csv')) return 'csv';
+    if (type.includes('text') || type.includes('plain') || name.endsWith('.txt')) return 'text';
+    
+    return 'unknown';
+  };
 
-const getFileType = (document) => {
-  
-  // Enhanced file type information
+  const fileType = getDocumentFormat(document);
+
+// Enhanced file type information
   const getFileTypeInfo = (type) => {
     const fileTypes = {
       pdf: { 
@@ -427,10 +428,10 @@ const getFileType = (document) => {
     
     // Track document view
     AnalyticsService.trackEvent('document_viewed', {
-      documentType: fileType,
-      documentSize: document.size,
-      platform: PlatformUtils.isWeb() ? 'web' : 'mobile',
-    });
+          documentType: getDocumentFormat(document),
+          documentSize: document.size,
+          platform: PlatformUtils.isWeb() ? 'web' : 'mobile',
+        });
   }, [document]);
 
   // Auto-save preferences
@@ -512,9 +513,9 @@ const getFileType = (document) => {
       setError(error.message || 'Failed to load document');
       
       AnalyticsService.trackEvent('document_load_error', {
-        documentType: fileType,
-        error: error.message,
-      });
+          documentType: getDocumentFormat(document),
+          error: error.message,
+        });
     } finally {
       setLoading(false);
     }
@@ -537,12 +538,13 @@ const getFileType = (document) => {
     if (storedDoc.webFileData && Array.isArray(storedDoc.webFileData)) {
       const uint8Array = new Uint8Array(storedDoc.webFileData);
       
-      // Handle all text-based formats consistently
-if (['text', 'csv', 'word', 'excel'].includes(fileType)) {
+      // Handle all text-based formats consistently  
+      const documentFormat = getDocumentFormat(document);
+      if (['text', 'csv', 'word', 'excel'].includes(documentFormat)) {
   try {
     let content = '';
     
-    if (fileType === 'text' || fileType === 'csv') {
+    if (documentFormat === 'text' || documentFormat === 'csv') {
       const decoder = new TextDecoder('utf-8');
       content = decoder.decode(uint8Array);
     } else {
@@ -552,11 +554,11 @@ if (['text', 'csv', 'word', 'excel'].includes(fileType)) {
         ==================
 
         File: ${document.originalName}
-        Type: ${fileType.toUpperCase()} Document
+        Type: ${documentFormat.toUpperCase()} Document
         Size: ${formatFileSize(document.size)}
         Uploaded: ${new Date(document.uploadedAt).toLocaleDateString()}
 
-        This ${fileType} document is available for processing into a training plan.
+        This ${documentFormat} document is available for processing into a training plan.
 
         To extract and view the full content:
         1. Navigate back to the upload screen
@@ -579,7 +581,7 @@ if (['text', 'csv', 'word', 'excel'].includes(fileType)) {
             console.error('Content processing error:', error);
             setError('Failed to process document content');
           }
-        } else if (fileType === 'pdf') {
+        } else if (documentFormat === 'pdf') {
           // PDFs use web viewer
           const blob = new Blob([uint8Array], { type: document.type });
           const url = URL.createObjectURL(blob);
@@ -643,11 +645,12 @@ if (['text', 'csv', 'word', 'excel'].includes(fileType)) {
 
       setProcessingProgress(0.8);
 
-     if (['text', 'csv', 'word', 'excel'].includes(fileType)) {
+     const documentFormat = getDocumentFormat(document);
+     if (['text', 'csv', 'word', 'excel'].includes(documentFormat)) {
   try {
     let content = '';
     
-    if (fileType === 'text' || fileType === 'csv') {
+    if (documentFormat === 'text' || documentFormat === 'csv') {
       content = await RNFS.readFile(document.localPath, 'utf8');
     } else {
       // For complex formats on mobile, show document info
@@ -657,19 +660,19 @@ if (['text', 'csv', 'word', 'excel'].includes(fileType)) {
       ============================
 
       File: ${document.originalName}
-      Type: ${fileType.toUpperCase()} Document
+      Type: ${documentFormat.toUpperCase()} Document
       Size: ${formatFileSize(stat.size)}
       Location: ${document.localPath}
       Uploaded: ${new Date(document.uploadedAt).toLocaleDateString()}
 
-      This ${fileType} document is available for processing into a training plan.
+      This ${documentFormat} document is available for processing into a training plan.
 
       To extract and view the full content:
       1. Navigate back to the upload screen  
       2. Use the "Process Document" option
       3. The extracted content will be available in your training library
 
-      Mobile Preview: Raw file content preview not available for ${fileType.toUpperCase()} files.
+      Mobile Preview: Raw file content preview not available for ${documentFormat.toUpperCase()} files.
       Use the processing feature to extract readable content.
             `.trim();
           }
@@ -1025,11 +1028,15 @@ if (['text', 'csv', 'word', 'excel'].includes(fileType)) {
     </View>
   );
 
-  const renderDownloadOption = () => (
-    <View style={styles.downloadContainer}>
-      <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-        <Icon name={fileInfo.icon} size={80} color={fileInfo.color} />
-      </Animated.View>
+const renderDownloadOption = () => {
+    const documentFormat = getDocumentFormat(document);
+    const fileInfo = getFileTypeInfo(documentFormat);
+    
+    return (
+      <View style={styles.downloadContainer}>
+        <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+          <Icon name={fileInfo.icon} size={80} color={fileInfo.color} />
+        </Animated.View>
       <Text style={[TEXT_STYLES.h2, styles.downloadTitle]}>
         {fileInfo.label}
       </Text>
@@ -1111,7 +1118,8 @@ if (['text', 'csv', 'word', 'excel'].includes(fileType)) {
         </Button>
       </View>
     </View>
-  );
+    );
+  };
 
   const renderUnsupportedContent = () => (
     <View style={styles.errorContainer}>
