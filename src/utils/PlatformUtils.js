@@ -13,7 +13,7 @@ class PlatformUtils {
 
   static isIOS() {
     return Platform.OS === 'ios';
-  }
+  
 
   static isAndroid() {
     return Platform.OS === 'android';

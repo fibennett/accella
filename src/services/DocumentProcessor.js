@@ -658,91 +658,21 @@ async processTrainingPlan(documentId) {
       hasWebData: !!document.webFileData,
       hasLocalPath: !!document.localPath
     });
+    
+    // Extract text content using unified approach
+    console.log('Starting unified text extraction for document:', document.id);
 
-    // Extract text content based on file type
-      let extractedText = '';
-      const fileType = document.type.toLowerCase();
-      const fileName = document.originalName.toLowerCase();
+    const extractionResult = await this.extractDocumentText(document);
+    const extractedText = extractionResult.text;
+    const documentFormat = extractionResult.format;
+    const documentMetadata = extractionResult.metadata;
 
-      try {
-        // Improve file type detection
-        if (fileType.includes('word') || fileType.includes('document') || 
-            (fileType.includes('officedocument.wordprocessingml') && !fileType.includes('spreadsheet'))) {
-          extractedText = await this.extractWordText(document);
-        } else if (fileType.includes('excel') || fileType.includes('sheet') || 
-                  fileType.includes('spreadsheetml') || fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
-          extractedText = await this.extractExcelText(document);
-        } else if (fileType.includes('csv') || fileName.endsWith('.csv')) {
-          extractedText = await this.extractCSVText(document);
-        } else if (fileType.includes('text') || fileType.includes('plain') || fileName.endsWith('.txt')) {
-          extractedText = await this.extractTextFile(document);
-        } else if (fileType.includes('pdf') || fileName.endsWith('.pdf')) {
-            const pdfProcessor = initializePDFProcessor();
-            
-            if (!pdfProcessor) {
-              // Provide helpful fallback message
-              extractedText = `
-          PDF Processing Not Available
-          ===========================
-
-          Your PDF document "${document.originalName}" cannot be processed directly.
-
-          Please convert your PDF to one of these supported formats:
-          • Word Document (.docx) - Recommended
-          • Text File (.txt)
-          • CSV File (.csv)
-
-          How to convert:
-          1. Open your PDF in Microsoft Word or Google Docs
-          2. Use File > Save As and select .docx format
-          3. Upload the converted file
-
-          This ensures your training plan can be properly processed and analyzed.
-              `.trim();
-            } else {
-              try {
-                // Validate PDF before processing
-                const validation = await pdfProcessor.validatePDFDocument(document);
-                if (!validation.isValid) {
-                  throw PlatformUtils.createError(
-                    `PDF validation failed: ${validation.errors.join(', ')}`,
-                    validation.suggestions
-                  );
-                }
-                
-                extractedText = await pdfProcessor.extractTextFromPDF(document);
-              } catch (pdfError) {
-                console.warn('PDF processing failed, using fallback:', pdfError.message);
-                extractedText = `
-          PDF Processing Error
-          ===================
-
-          Unable to process "${document.originalName}" automatically.
-
-          Error: ${pdfError.message}
-
-          Please try:
-          1. Converting to Word (.docx) format
-          2. Copying text to a .txt file
-          3. Using the web version for better PDF support
-
-          Your training plan data is important - please convert to a supported format for best results.
-                `.trim();
-              }
-            }
-          } else {
-          throw PlatformUtils.createError(
-            `Unsupported file type: ${document.type}`,
-            [
-              'Use supported formats: .docx, .xlsx, .csv, .txt',
-              'Convert your file to a supported format'
-            ]
-          );
-        }
-      } catch (extractionError) {
-        console.error('Text extraction failed:', extractionError);
-        throw extractionError;
-      }
+    console.log(`Text extracted from ${documentFormat} document:`, {
+      length: extractedText.length,
+      format: documentFormat,
+      hasMetadata: !!documentMetadata,
+      processingMethod: documentMetadata.processingMethod
+    });
 
     if (!extractedText || extractedText.trim().length === 0) {
       throw PlatformUtils.createError(
@@ -1234,222 +1164,146 @@ async storeDocumentWithIntegrityCheck(file) {
 
 
   // Enhanced text extraction with better error handling
-// Enhanced text extraction with better error handling and web file support
-// Fixed extractWordText method
-async extractWordText(document) {
+async extractWordTextUnified(document) {
+  if (!mammoth) {
+    return this.generateFormatFallback('Word', document, [
+      'Word processing library not available',
+      'Try converting to text (.txt) format'
+    ]);
+  }
+  
   try {
-    if (!mammoth) {
-      throw PlatformUtils.createError(
-        'Word processing library not available',
-        ['Install mammoth library', 'Try using a text file instead']
-      );
-    }
-
-    let buffer;
-    console.log('Starting Word text extraction for document:', document.id);
-    
-    if (PlatformUtils.isWeb()) {
-      // For web, get the stored file data
-      const documents = await this.getStoredDocuments();
-      const storedDoc = documents.find(doc => doc.id === document.id);
-      
-      if (storedDoc && storedDoc.webFileData) {
-        console.log('Found stored web file data, length:', storedDoc.webFileData.length);
-        // Convert back from stored array to ArrayBuffer
-        buffer = new Uint8Array(storedDoc.webFileData).buffer;
-        console.log('Converted to ArrayBuffer, byteLength:', buffer.byteLength);
-      } else if (document.webFileData) {
-        console.log('Using document webFileData directly');
-        buffer = new Uint8Array(document.webFileData).buffer;
-      } else {
-        console.error('No web file data found for document:', document.id);
-        throw PlatformUtils.createError(
-          'File data not found - file may have been cleared from memory',
-          [
-            'Try uploading the file again',
-            'Process the file immediately after upload',
-            'Use a smaller file size'
-          ]
-        );
-      }
-    } else {
-      // Mobile file processing
-      if (!RNFS || !document.localPath) {
-        throw PlatformUtils.createError('Mobile file not accessible');
-      }
-      console.log('Reading mobile file from:', document.localPath);
-      const base64Data = await RNFS.readFile(document.localPath, 'base64');
-      buffer = Buffer.from(base64Data, 'base64');
-    }
-    
-    if (!buffer || buffer.byteLength === 0) {
-      throw PlatformUtils.createError(
-        'File buffer is empty or invalid',
-        ['Check if the file is corrupted', 'Try re-uploading the file']
-      );
-    }
-    
-    console.log('Processing with mammoth, buffer size:', buffer.byteLength);
-    
-    // Use the correct mammoth API call
+    const fileData = await this.readDocumentData(document);
     const result = await mammoth.extractRawText({ 
-      arrayBuffer: buffer 
+      arrayBuffer: fileData.data.buffer || fileData.data 
     });
     
-    if (!result || !result.value) {
-      throw PlatformUtils.createError(
-        'No text could be extracted from the Word document',
-        ['Check if the document contains readable text', 'Try saving as .docx format']
-      );
+    if (!result.value || result.value.trim().length === 0) {
+      return this.generateFormatFallback('Word', document, ['Document appears to be empty']);
     }
-    
-    PlatformUtils.logDebugInfo('Word text extracted successfully', { 
-      textLength: result.value.length,
-      hasWarnings: result.messages && result.messages.length > 0
-    });
     
     return result.value;
   } catch (error) {
-    console.error('Word text extraction failed:', error);
-    throw PlatformUtils.handlePlatformError(error, 'Word Text Extraction');
+    console.error('Word extraction failed:', error);
+    return this.generateFormatFallback('Word', document, [`Extraction error: ${error.message}`]);
   }
 }
 
-async extractExcelText(document) {
+async extractExcelTextUnified(document) {
+  if (!XLSX) {
+    return this.generateFormatFallback('Excel', document, [
+      'Excel processing library not available',
+      'Try converting to CSV format'
+    ]);
+  }
+  
   try {
-    if (!XLSX) {
-      throw PlatformUtils.createError(
-        'Excel processing library not available',
-        ['Install xlsx library', 'Try using a CSV file instead']
-      );
-    }
-
-    let buffer;
+    const fileData = await this.readDocumentData(document);
+    const workbook = XLSX.read(fileData.data, { type: fileData.type });
     
-    if (PlatformUtils.isWeb()) {
-      const documents = await this.getStoredDocuments();
-      const storedDoc = documents.find(doc => doc.id === document.id);
-      
-      if (storedDoc && storedDoc.webFileData) {
-        // Fix: Convert array back to Uint8Array
-        buffer = new Uint8Array(storedDoc.webFileData);
-      } else if (document.file) {
-        buffer = await document.file.arrayBuffer();
-        buffer = new Uint8Array(buffer);
-      } else {
-        throw PlatformUtils.createError('Web file not accessible - file data may have been cleared');
-      }
-    } else {
-      if (!RNFS || !document.localPath) {
-        throw PlatformUtils.createError('Mobile file not accessible');
-      }
-      const base64Data = await RNFS.readFile(document.localPath, 'base64');
-      buffer = Buffer.from(base64Data, 'base64');
-    }
+    let text = `Excel Document: ${document.originalName}\n${'='.repeat(50)}\n\n`;
     
-    // Use 'array' type for web Uint8Array, 'buffer' for mobile Buffer
-    const workbook = XLSX.read(buffer, { 
-      type: PlatformUtils.isWeb() ? 'array' : 'buffer' 
-    });
-    
-    let extractedText = '';
-    
-    workbook.SheetNames.forEach(sheetName => {
+    workbook.SheetNames.forEach((sheetName, index) => {
       const worksheet = workbook.Sheets[sheetName];
       const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-      extractedText += `Sheet: ${sheetName}\n`;
-      data.forEach(row => {
-        const rowText = row.filter(cell => cell !== null && cell !== undefined).join(' | ');
+      
+      text += `Sheet ${index + 1}: ${sheetName}\n${'-'.repeat(30)}\n`;
+      
+      data.forEach((row, rowIndex) => {
+        const rowText = row
+          .filter(cell => cell !== null && cell !== undefined && cell !== '')
+          .join(' | ');
         if (rowText.trim()) {
-          extractedText += rowText + '\n';
+          text += `Row ${rowIndex + 1}: ${rowText}\n`;
         }
       });
-      extractedText += '\n';
+      text += '\n';
     });
     
-    PlatformUtils.logDebugInfo('Excel text extracted', { 
-      textLength: extractedText.length,
-      sheetsCount: workbook.SheetNames.length 
-    });
+    if (text.trim().length <= 100) {
+      return this.generateFormatFallback('Excel', document, ['No data found in spreadsheet']);
+    }
     
-    return extractedText;
+    return text.trim();
   } catch (error) {
-    throw PlatformUtils.handlePlatformError(error, 'Excel Text Extraction');
+    console.error('Excel extraction failed:', error);
+    return this.generateFormatFallback('Excel', document, [`Extraction error: ${error.message}`]);
   }
 }
 
-async extractCSVText(document) {
+async extractCSVTextUnified(document) {
   try {
-    let text;
+    const fileData = await this.readDocumentData(document);
+    const decoder = new TextDecoder('utf-8');
+    let text = decoder.decode(fileData.data);
     
-    if (PlatformUtils.isWeb()) {
-      const documents = await this.getStoredDocuments();
-      const storedDoc = documents.find(doc => doc.id === document.id);
-      
-      if (storedDoc && storedDoc.webFileData) {
-        // Fix: Convert array back to Uint8Array then to ArrayBuffer
-        const uint8Array = new Uint8Array(storedDoc.webFileData);
-        const decoder = new TextDecoder('utf-8');
-        text = decoder.decode(uint8Array);
-      } else if (document.file) {
-        text = await document.file.text();
-      } else {
-        throw PlatformUtils.createError('Web file not accessible - file data may have been cleared');
-      }
-    } else {
-      if (!RNFS || !document.localPath) {
-        throw PlatformUtils.createError('Mobile file not accessible');
-      }
-      text = await RNFS.readFile(document.localPath, 'utf8');
+    if (!text || text.trim().length === 0) {
+      return this.generateFormatFallback('CSV', document, ['File appears to be empty']);
     }
     
-    PlatformUtils.logDebugInfo('CSV text extracted', { 
-      textLength: text.length 
-    });
+    // Add header for better formatting
+    text = `CSV Document: ${document.originalName}\n${'='.repeat(50)}\n\n${text}`;
     
     return text;
   } catch (error) {
-    throw PlatformUtils.handlePlatformError(error, 'CSV Text Extraction');
+    console.error('CSV extraction failed:', error);
+    return this.generateFormatFallback('CSV', document, [`Extraction error: ${error.message}`]);
   }
 }
 
-async extractTextFile(document) {
+async extractTextFileUnified(document) {
   try {
-    let text;
+    const fileData = await this.readDocumentData(document);
+    const decoder = new TextDecoder('utf-8');
+    let text = decoder.decode(fileData.data);
     
-    if (PlatformUtils.isWeb()) {
-      const documents = await this.getStoredDocuments();
-      const storedDoc = documents.find(doc => doc.id === document.id);
-      
-      if (storedDoc && storedDoc.webFileData) {
-        // Fix: Convert array back to Uint8Array then decode
-        const uint8Array = new Uint8Array(storedDoc.webFileData);
-        const decoder = new TextDecoder('utf-8');
-        text = decoder.decode(uint8Array);
-      } else if (document.file) {
-        text = await document.file.text();
-      } else {
-        throw PlatformUtils.createError('Web file not accessible - file data may have been cleared');
-      }
-    } else {
-      if (!RNFS || !document.localPath) {
-        throw PlatformUtils.createError('Mobile file not accessible');
-      }
-      text = await RNFS.readFile(document.localPath, 'utf8');
+    if (!text || text.trim().length === 0) {
+      return this.generateFormatFallback('Text', document, ['File appears to be empty']);
     }
     
-    PlatformUtils.logDebugInfo('Text file extracted', { 
-      textLength: text.length 
-    });
+    // Add header for consistency
+    text = `Text Document: ${document.originalName}\n${'='.repeat(50)}\n\n${text}`;
     
     return text;
   } catch (error) {
-    throw PlatformUtils.handlePlatformError(error, 'Text File Extraction');
+    console.error('Text extraction failed:', error);
+    return this.generateFormatFallback('Text', document, [`Extraction error: ${error.message}`]);
+  }
+}
+
+async extractPDFTextUnified(document) {
+  try {
+    const pdfProcessor = initializePDFProcessor();
+    if (!pdfProcessor) {
+      return this.generateFormatFallback('PDF', document, [
+        'PDF processing requires additional setup',
+        'Convert to Word (.docx) for guaranteed processing',
+        'Use web version for better PDF support'
+      ]);
+    }
+    
+    const text = await pdfProcessor.extractTextFromPDF(document);
+    
+    if (!text || text.trim().length === 0) {
+      return this.generateFormatFallback('PDF', document, [
+        'No extractable text found - may be image-based PDF',
+        'Try using OCR software first',
+        'Convert to Word format'
+      ]);
+    }
+    
+    return `PDF Document: ${document.originalName}\n${'='.repeat(50)}\n\n${text}`;
+  } catch (error) {
+    console.warn('PDF processing failed, using enhanced fallback');
+    return this.generateFormatFallback('PDF', document, [
+      'PDF text extraction failed',
+      'Try converting to Word or text format',
+      'Ensure PDF contains selectable text (not scanned images)'
+    ]);
   }
 }
 
   // Keep all your existing parsing methods unchanged but add error handling
-// In DocumentProcessor.js, ensure the parseTrainingPlanContent method properly stores document names:
 async parseTrainingPlanContent(text, document, options = {}) {
   try {
     const lines = text.split('\n').filter(line => line.trim());
@@ -1557,6 +1411,138 @@ validateFileForPlatform(file) {
       'Try compressing the file if it\'s too large'
     ] : []
   };
+}
+
+// ADD this entirely new method
+async readDocumentData(document) {
+  try {
+    if (PlatformUtils.isWeb()) {
+      // Try stored data first, then original file
+      const documents = await this.getStoredDocuments();
+      const storedDoc = documents.find(doc => doc.id === document.id);
+      
+      if (storedDoc?.webFileData) {
+        return {
+          type: 'array',
+          data: new Uint8Array(storedDoc.webFileData)
+        };
+      } else if (document.file) {
+        const buffer = await document.file.arrayBuffer();
+        return {
+          type: 'array', 
+          data: new Uint8Array(buffer)
+        };
+      } else {
+        throw PlatformUtils.createError('File data not accessible');
+      }
+    } else {
+      // Mobile file reading
+      if (!RNFS || !document.localPath) {
+        throw PlatformUtils.createError('Mobile file not accessible');
+      }
+      
+      const base64Data = await RNFS.readFile(document.localPath, 'base64');
+      return {
+        type: 'buffer',
+        data: Buffer.from(base64Data, 'base64')
+      };
+    }
+  } catch (error) {
+    throw PlatformUtils.handlePlatformError(error, 'Document Data Reading');
+  }
+}
+
+// ADD this entirely new method
+generateFormatFallback(formatName, document, issues = []) {
+  const timestamp = new Date().toLocaleDateString();
+  
+  return `
+${formatName} Document Processing Notice
+${'='.repeat(40)}
+
+Document: ${document.originalName}
+Size: ${this.formatFileSize(document.size)}
+Uploaded: ${timestamp}
+Platform: ${document.platform}
+
+${issues.length > 0 ? 'Issues:\n' + issues.map(issue => `• ${issue}`).join('\n') : ''}
+
+This document could not be processed automatically. 
+Please convert to a supported text format for full processing capabilities.
+
+Recommended formats:
+- Word Document (.docx) - Best compatibility
+- Plain Text (.txt) - Universal support  
+- CSV (.csv) - For structured data
+
+Document Information Available:
+- Original filename: ${document.originalName}
+- File type: ${document.type}
+- Upload date: ${new Date(document.uploadedAt).toLocaleDateString()}
+- File size: ${this.formatFileSize(document.size)}
+  `.trim();
+}
+
+// ADD this entirely new method
+async extractDocumentText(document) {
+  const format = this.getDocumentFormat(document);
+  
+  try {
+    let extractedText = '';
+    
+    switch (format) {
+      case 'pdf':
+        extractedText = await this.extractPDFTextUnified(document);
+        break;
+      case 'word':
+        extractedText = await this.extractWordTextUnified(document);
+        break;
+      case 'excel':
+        extractedText = await this.extractExcelTextUnified(document);
+        break;
+      case 'csv':
+        extractedText = await this.extractCSVTextUnified(document);
+        break;
+      case 'text':
+        extractedText = await this.extractTextFileUnified(document);
+        break;
+      default:
+        throw PlatformUtils.createError(`Unsupported format: ${format}`, [
+          'Convert to supported format (.pdf, .docx, .xlsx, .csv, .txt)',
+          'Check if file extension matches content'
+        ]);
+    }
+    
+    if (!extractedText || extractedText.trim().length === 0) {
+      throw PlatformUtils.createError('No text content found in document');
+    }
+    
+    return {
+      text: extractedText,
+      format,
+      metadata: {
+        originalFormat: format,
+        extractedLength: extractedText.length,
+        processingMethod: this.getProcessingMethod(format),
+        timestamp: new Date().toISOString()
+      }
+    };
+    
+  } catch (error) {
+    console.error(`Text extraction failed for ${format}:`, error);
+    throw error;
+  }
+}
+
+getProcessingMethod(format) {
+  const methods = {
+    pdf: 'PDF.js / pdf-parse',
+    word: 'Mammoth library',
+    excel: 'XLSX library',
+    csv: 'Direct text reading',
+    text: 'Direct text reading'
+  };
+  return methods[format] || 'Unknown';
 }
 
   // All your existing extraction methods remain the same

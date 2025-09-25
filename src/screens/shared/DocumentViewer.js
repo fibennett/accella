@@ -157,29 +157,28 @@ useEffect(() => {
   const appStateRef = useRef(AppState.currentState);
 
   // File type detection with enhanced categorization
-  const getFileType = (document) => {
-    const type = document.type ? document.type.toLowerCase() : '';
-    const name = document.originalName ? document.originalName.toLowerCase() : '';
-    
-    const typeMap = {
-      pdf: ['pdf', 'application/pdf'],
-      word: ['doc', 'docx', 'odt', 'rtf'],
-      excel: ['xls', 'xlsx', 'ods', 'csv'],
-      powerpoint: ['ppt', 'pptx', 'odp'],
-      text: ['txt', 'md', 'markdown', 'log', 'json', 'xml', 'html', 'css', 'js', 'ts', 'jsx', 'tsx'],
-      image: ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp'],
-      archive: ['zip', 'rar', '7z', 'tar', 'gz'],
-      video: ['mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv'],
-      audio: ['mp3', 'wav', 'ogg', 'flac', 'aac'],
-    };
-
-    for (const [category, extensions] of Object.entries(typeMap)) {
-      if (extensions.some(ext => type.includes(ext) || name.endsWith(`.${ext}`))) {
-        return category;
-      }
-    }
-    return 'unknown';
+const getFileType = (document) => {
+  const type = document.type ? document.type.toLowerCase() : '';
+  const name = document.originalName ? document.originalName.toLowerCase() : '';
+  
+  const typeMap = {
+    pdf: ['pdf', 'application/pdf'],
+    word: ['doc', 'docx', 'odt', 'rtf', 'document', 'wordprocessingml'],
+    excel: ['xls', 'xlsx', 'ods', 'csv', 'sheet', 'spreadsheetml'],
+    text: ['txt', 'md', 'markdown', 'log', 'json', 'xml', 'html', 'css', 'js', 'ts', 'jsx', 'tsx', 'plain'],
+    image: ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp'],
+    archive: ['zip', 'rar', '7z', 'tar', 'gz'],
+    video: ['mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv'],
+    audio: ['mp3', 'wav', 'ogg', 'flac', 'aac'],
   };
+
+  for (const [category, extensions] of Object.entries(typeMap)) {
+    if (extensions.some(ext => type.includes(ext) || name.endsWith(`.${ext}`))) {
+      return category;
+    }
+  }
+  return 'unknown';
+};
 
   const fileType = getFileType(document);
   
@@ -547,17 +546,61 @@ useEffect(() => {
     if (storedDoc.webFileData && Array.isArray(storedDoc.webFileData)) {
       const uint8Array = new Uint8Array(storedDoc.webFileData);
       
-      if (['text', 'csv'].includes(fileType)) {
-        const decoder = new TextDecoder('utf-8');
-        const content = decoder.decode(uint8Array);
-        setDocumentContent(content);
-        setViewMode('text');
-      } else {
-        const blob = new Blob([uint8Array], { type: document.type });
-        const url = URL.createObjectURL(blob);
-        setDocumentUrl(url);
-        setViewMode('web');
-      }
+      // Handle all text-based formats consistently
+if (['text', 'csv', 'word', 'excel'].includes(fileType)) {
+  try {
+    let content = '';
+    
+    if (fileType === 'text' || fileType === 'csv') {
+      const decoder = new TextDecoder('utf-8');
+      content = decoder.decode(uint8Array);
+    } else {
+      // For complex formats, show document info and provide processing option
+      content = `
+        Document Information
+        ==================
+
+        File: ${document.originalName}
+        Type: ${fileType.toUpperCase()} Document
+        Size: ${formatFileSize(document.size)}
+        Uploaded: ${new Date(document.uploadedAt).toLocaleDateString()}
+
+        This ${fileType} document is available for processing into a training plan.
+
+        To extract and view the full content:
+        1. Navigate back to the upload screen
+        2. Use the "Process Document" option
+        3. The extracted content will be available in your training library
+
+        Document Preview: First ${Math.min(500, uint8Array.length)} bytes shown as text below
+        ${'='.repeat(60)}
+
+        ${new TextDecoder('utf-8', {fatal: false}).decode(uint8Array.slice(0, 500))}
+
+        ${'='.repeat(60)}
+        End of preview. Full content available after processing.
+              `.trim();
+            }
+            
+            setDocumentContent(content);
+            setViewMode('text');
+          } catch (error) {
+            console.error('Content processing error:', error);
+            setError('Failed to process document content');
+          }
+        } else if (fileType === 'pdf') {
+          // PDFs use web viewer
+          const blob = new Blob([uint8Array], { type: document.type });
+          const url = URL.createObjectURL(blob);
+          setDocumentUrl(url);
+          setViewMode('web');
+        } else {
+          // Other formats
+          const blob = new Blob([uint8Array], { type: document.type });
+          const url = URL.createObjectURL(blob);
+          setDocumentUrl(url);
+          setViewMode('web');
+        }
       
       setProcessingProgress(0.9);
     } else {
@@ -609,10 +652,43 @@ useEffect(() => {
 
       setProcessingProgress(0.8);
 
-      if (['text', 'csv'].includes(fileType)) {
-        const content = await RNFS.readFile(document.localPath, 'utf8');
-        setDocumentContent(content);
-        setViewMode('text');
+     if (['text', 'csv', 'word', 'excel'].includes(fileType)) {
+  try {
+    let content = '';
+    
+    if (fileType === 'text' || fileType === 'csv') {
+      content = await RNFS.readFile(document.localPath, 'utf8');
+    } else {
+      // For complex formats on mobile, show document info
+      const stat = await RNFS.stat(document.localPath);
+      content = `
+      Document Information (Mobile)
+      ============================
+
+      File: ${document.originalName}
+      Type: ${fileType.toUpperCase()} Document
+      Size: ${formatFileSize(stat.size)}
+      Location: ${document.localPath}
+      Uploaded: ${new Date(document.uploadedAt).toLocaleDateString()}
+
+      This ${fileType} document is available for processing into a training plan.
+
+      To extract and view the full content:
+      1. Navigate back to the upload screen  
+      2. Use the "Process Document" option
+      3. The extracted content will be available in your training library
+
+      Mobile Preview: Raw file content preview not available for ${fileType.toUpperCase()} files.
+      Use the processing feature to extract readable content.
+            `.trim();
+          }
+          
+          setDocumentContent(content);
+          setViewMode('text');
+        } catch (error) {
+          console.error('Mobile content processing error:', error);
+          setError('Failed to process document content');
+        }
       } else {
         setDocumentUrl(`file://${document.localPath}`);
         setViewMode('download');
