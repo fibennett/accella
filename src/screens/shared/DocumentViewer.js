@@ -157,30 +157,21 @@ useEffect(() => {
   const appStateRef = useRef(AppState.currentState);
 
   // File type detection with enhanced categorization
-const getFileType = (document) => {
-  const type = document.type ? document.type.toLowerCase() : '';
-  const name = document.originalName ? document.originalName.toLowerCase() : '';
+getDocumentFormat(document) {
+  const type = document.type?.toLowerCase() || '';
+  const name = document.originalName?.toLowerCase() || '';
   
-  const typeMap = {
-    pdf: ['pdf', 'application/pdf'],
-    word: ['doc', 'docx', 'odt', 'rtf', 'document', 'wordprocessingml'],
-    excel: ['xls', 'xlsx', 'ods', 'csv', 'sheet', 'spreadsheetml'],
-    text: ['txt', 'md', 'markdown', 'log', 'json', 'xml', 'html', 'css', 'js', 'ts', 'jsx', 'tsx', 'plain'],
-    image: ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp'],
-    archive: ['zip', 'rar', '7z', 'tar', 'gz'],
-    video: ['mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv'],
-    audio: ['mp3', 'wav', 'ogg', 'flac', 'aac'],
-  };
-
-  for (const [category, extensions] of Object.entries(typeMap)) {
-    if (extensions.some(ext => type.includes(ext) || name.endsWith(`.${ext}`))) {
-      return category;
-    }
-  }
+  // Priority order: MIME type first, then extension
+  if (type.includes('pdf') || name.endsWith('.pdf')) return 'pdf';
+  if (type.includes('word') || type.includes('document') || name.endsWith('.docx') || name.endsWith('.doc')) return 'word';
+  if (type.includes('excel') || type.includes('sheet') || name.endsWith('.xlsx') || name.endsWith('.xls')) return 'excel';
+  if (type.includes('csv') || name.endsWith('.csv')) return 'csv';
+  if (type.includes('text') || type.includes('plain') || name.endsWith('.txt')) return 'text';
+  
   return 'unknown';
-};
+}
 
-  const fileType = getFileType(document);
+const getFileType = (document) => {
   
   // Enhanced file type information
   const getFileTypeInfo = (type) => {
