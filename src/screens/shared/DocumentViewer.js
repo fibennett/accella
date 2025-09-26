@@ -160,14 +160,18 @@ if (!document && !routeParams.showAllDocuments) {
   const [estimatedReadTime, setEstimatedReadTime] = useState(0);
   // Add these new states after your existing state declarations
   const [showScrollFab, setShowScrollFab] = useState(false);
-  const [scrollFabPosition, setScrollFabPosition] = useState({ x: 0, y: 0 });
+  //const [scrollFabPosition, setScrollFabPosition] = useState({ x: 0, y: 0 });
   const [isScrollFabDragging, setIsScrollFabDragging] = useState(false);
   const [scrollContentHeight, setScrollContentHeight] = useState(0);
+  //const [isScrolling, setIsScrolling] = useState(false);
+  const [fabScrollProgress, setFabScrollProgress] = useState(0);
 
   // Add these refs
   const scrollFabRef = useRef(null);
   const scrollIndicatorTimeoutRef = useRef(null);
+  const scrollingTimeoutRef = useRef(null);
   const scrollFabAnimatedValue = useRef(new Animated.Value(0)).current;
+  //const lastScrollEventTime = useRef(0); 
   // Refs
   const scrollViewRef = useRef(null);
   const webViewRef = useRef(null);
@@ -437,60 +441,53 @@ const restoreScrollPosition = useCallback(() => {
 const handleScroll = useCallback((event) => {
   const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
   const scrollPosition = contentOffset.y;
-  const maxScroll = contentSize.height - layoutMeasurement.height;
-  const progress = maxScroll > 0 ? scrollPosition / maxScroll : 0;
   
   // Store in ref for immediate access
   lastScrollPositionRef.current = scrollPosition;
-  setScrollContentHeight(contentSize.height);
   
-  // Show scroll FAB when scrolling starts
-  if (!showScrollFab && scrollPosition > 50) {
-    setShowScrollFab(true);
-    Animated.timing(scrollFabAnimatedValue, {
-      toValue: 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
+  // Update content height when it changes significantly
+  if (Math.abs(contentSize.height - scrollContentHeight) > 50) {
+    setScrollContentHeight(contentSize.height);
   }
   
-  // Update FAB position to follow scroll progress (only if not being dragged)
-  if (!isScrollFabDragging && showScrollFab) {
-    const screenHeight = Dimensions.get('window').height;
-    const fabSize = Platform.OS === 'web' ? 60 : 80;
-    const headerHeight = 150; // Approximate header height
-    const availableHeight = screenHeight - headerHeight - fabSize - 50;
-    const fabY = headerHeight + (progress * availableHeight);
+  // Calculate and update FAB progress for smooth movement
+  const progress = scrollContentHeight > 0 
+    ? scrollPosition / Math.max(1, scrollContentHeight - layoutMeasurement.height + 200)
+    : 0;
+  
+  // Update FAB position state to trigger re-render
+  setFabScrollProgress(Math.max(0, Math.min(1, progress)));
+  
+  // Show/hide FAB logic - simplified
+  if (!isScrollFabDragging) {
+    const shouldShow = scrollPosition > 100 && contentSize.height > layoutMeasurement.height + 200;
     
-    setScrollFabPosition({ 
-      x: Platform.OS === 'web' ? 20 : 16, 
-      y: Math.max(headerHeight, Math.min(screenHeight - fabSize - 50, fabY))
-    });
+    if (shouldShow && !showScrollFab) {
+      setShowScrollFab(true);
+      Animated.timing(scrollFabAnimatedValue, {
+        toValue: 1,
+        duration: 150,
+        useNativeDriver: true,
+      }).start();
+    }
   }
   
-  // Hide scroll FAB after scrolling stops
-  if (scrollIndicatorTimeoutRef.current) {
-    clearTimeout(scrollIndicatorTimeoutRef.current);
+  // Clear timeout and set new one
+  if (scrollingTimeoutRef.current) {
+    clearTimeout(scrollingTimeoutRef.current);
   }
   
-  scrollIndicatorTimeoutRef.current = setTimeout(() => {
-    if (showScrollFab && !isScrollFabDragging) {
+  scrollingTimeoutRef.current = setTimeout(() => {
+    if (!isScrollFabDragging) {
       Animated.timing(scrollFabAnimatedValue, {
         toValue: 0,
-        duration: 300,
+        duration: 200,
         useNativeDriver: true,
-      }).start(() => {
-        setShowScrollFab(false);
-      });
+      }).start(() => setShowScrollFab(false));
     }
-  }, 3000); // Hide after 3 seconds of no scrolling
-  
-  // Update reading progress less frequently
-  if (Math.abs(scrollPosition - lastScrollPosition) > 200) {
-    setLastScrollPosition(scrollPosition);
-    setReadingProgress(Math.max(0, Math.min(1, progress)));
-  }
-}, [showScrollFab, isScrollFabDragging, lastScrollPosition]);
+  }, 1000);
+}, [showScrollFab, isScrollFabDragging, scrollContentHeight]);
+
 
 const navigateToSearchResult = (direction) => {
   if (searchResults.length === 0) return;
@@ -532,6 +529,9 @@ useEffect(() => {
   return () => {
     if (scrollIndicatorTimeoutRef.current) {
       clearTimeout(scrollIndicatorTimeoutRef.current);
+    }
+    if (scrollingTimeoutRef.current) {
+      clearTimeout(scrollingTimeoutRef.current);
     }
   };
 }, []);
@@ -873,95 +873,98 @@ const renderScrollFab = () => {
   const rightPosition = Platform.OS === 'web' ? 20 : 16;
   const headerHeight = 150;
   
+  // Use the state-tracked progress for smooth updates
+  const currentProgress = fabScrollProgress;
+
+  // Calculate available height for FAB movement
+  const availableHeight = screenHeight - headerHeight - fabSize - 50;
+
+  // Dynamic position calculation that follows scroll progress
+  const fabTop = headerHeight + (currentProgress * availableHeight);
+
   const panResponder = PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     
     onPanResponderGrant: (evt, gestureState) => {
       setIsScrollFabDragging(true);
-      // Cancel auto-hide timeout
-      if (scrollIndicatorTimeoutRef.current) {
-        clearTimeout(scrollIndicatorTimeoutRef.current);
+      
+      // Clear all timeouts when dragging starts
+      if (scrollingTimeoutRef.current) {
+        clearTimeout(scrollingTimeoutRef.current);
       }
       
       // Visual feedback - slightly enlarge FAB
       Animated.timing(scrollFabAnimatedValue, {
         toValue: 1.1,
-        duration: 150,
+        duration: 100,
         useNativeDriver: true,
       }).start();
     },
     
     onPanResponderMove: (evt, gestureState) => {
-      if (Platform.OS === 'web') {
-        // Web: Direct scroll control
-        const availableHeight = screenHeight - headerHeight - 50;
-        const dragProgress = Math.max(0, Math.min(1, gestureState.moveY / availableHeight));
-        const scrollRange = scrollContentHeight - screenHeight + 200;
-        const targetScrollY = dragProgress * scrollRange;
-        
-        scrollViewRef.current?.scrollTo({ y: targetScrollY, animated: false });
-      } else {
-        // Mobile: Enhanced drag experience
-        const availableHeight = screenHeight - headerHeight - fabSize - 50;
-        const currentY = scrollFabPosition.y || (screenHeight / 2 - fabSize / 2);
-        const newY = Math.max(headerHeight, Math.min(screenHeight - fabSize - 50, currentY + gestureState.dy));
-        
-        // Update FAB position
-        setScrollFabPosition({ x: rightPosition, y: newY });
-        
-        // Calculate scroll position based on FAB position
-        const fabProgress = (newY - headerHeight) / availableHeight;
-        const scrollRange = scrollContentHeight - screenHeight + 200;
-        const targetScrollY = fabProgress * scrollRange;
-        
-        scrollViewRef.current?.scrollTo({ y: Math.max(0, targetScrollY), animated: false });
+      // Clear timeout during drag
+      if (scrollingTimeoutRef.current) {
+        clearTimeout(scrollingTimeoutRef.current);
+      }
+      
+      // Calculate drag position relative to available height
+      const dragY = evt.nativeEvent.pageY - headerHeight;
+      const dragProgress = Math.max(0, Math.min(1, dragY / availableHeight));
+      
+      // Update FAB progress state immediately for visual feedback
+      setFabScrollProgress(dragProgress);
+      
+      // Calculate target scroll position
+      const scrollRange = Math.max(1, scrollContentHeight - screenHeight + 200);
+      const targetScrollY = dragProgress * scrollRange;
+      
+      // Scroll immediately without animation
+      if (scrollViewRef.current) {
+        scrollViewRef.current.scrollTo({ 
+          y: Math.max(0, targetScrollY), 
+          animated: false 
+        });
       }
     },
     
     onPanResponderRelease: (evt, gestureState) => {
-      setIsScrollFabDragging(false);
-      
       // Return FAB to normal size
       Animated.timing(scrollFabAnimatedValue, {
         toValue: 1,
-        duration: 200,
+        duration: 150,
         useNativeDriver: true,
       }).start();
       
       // Handle momentum scrolling on mobile
-      if (Platform.OS !== 'web' && Math.abs(gestureState.vy) > 1) {
-        const momentum = gestureState.vy * -800; // Increased for more responsive feel
+      if (Platform.OS !== 'web' && Math.abs(gestureState.vy) > 0.5) {
+        const momentum = gestureState.vy * -400;
         const currentScroll = lastScrollPositionRef.current;
-        const targetScroll = Math.max(0, Math.min(
-          scrollContentHeight - screenHeight + 200, 
-          currentScroll + momentum
-        ));
+        const maxScroll = scrollContentHeight - screenHeight + 200;
+        const targetScroll = Math.max(0, Math.min(maxScroll, currentScroll + momentum));
         
         scrollViewRef.current?.scrollTo({ y: targetScroll, animated: true });
       }
       
-      // Reset auto-hide timer
-      scrollIndicatorTimeoutRef.current = setTimeout(() => {
-        if (!isScrollFabDragging) {
-          Animated.timing(scrollFabAnimatedValue, {
-            toValue: 0,
-            duration: 300,
-            useNativeDriver: true,
-          }).start(() => {
-            setShowScrollFab(false);
-          });
-        }
-      }, 4000);
+      // Reset dragging state after delay
+      setTimeout(() => {
+        setIsScrollFabDragging(false);
+        
+        // Restart auto-hide timer
+        scrollingTimeoutRef.current = setTimeout(() => {
+          if (!isScrollFabDragging && showScrollFab) {
+            Animated.timing(scrollFabAnimatedValue, {
+              toValue: 0,
+              duration: 300,
+              useNativeDriver: true,
+            }).start(() => {
+              setShowScrollFab(false);
+            });
+          }
+        }, 2000);
+      }, 100);
     },
   });
-  
-  const currentProgress = scrollContentHeight > 0 
-    ? lastScrollPositionRef.current / Math.max(1, scrollContentHeight - screenHeight + 200)
-    : 0;
-  
-  // Use FAB position if set, otherwise calculate from progress
-  const fabTop = scrollFabPosition.y || (headerHeight + (currentProgress * (screenHeight - headerHeight - fabSize - 50)));
   
   return (
     <Animated.View
@@ -971,17 +974,19 @@ const renderScrollFab = () => {
           opacity: scrollFabAnimatedValue.interpolate({
             inputRange: [0, 1, 1.1],
             outputRange: [0, 0.9, 1],
+            extrapolate: 'clamp',
           }),
           transform: [
             { 
               scale: scrollFabAnimatedValue.interpolate({
                 inputRange: [0, 1, 1.1],
                 outputRange: [0.8, 1, 1.1],
+                extrapolate: 'clamp',
               })
             }
           ],
           right: rightPosition,
-          top: fabTop,
+          top: Math.max(headerHeight, Math.min(screenHeight - fabSize - 50, fabTop)),
           width: fabSize,
           height: fabSize,
         }
@@ -1010,38 +1015,19 @@ const renderScrollFab = () => {
             </Text>
           </>
         ) : (
-          // Mobile version - enhanced drag interface
+          // Mobile version with percentage
           <>
             <Icon 
               name={isScrollFabDragging ? "drag-indicator" : "unfold-more"} 
-              size={isScrollFabDragging ? 28 : 24} 
+              size={isScrollFabDragging ? 20 : 24} 
               color={isScrollFabDragging ? '#FFD700' : 'white'} 
             />
-            <Text style={[styles.scrollFabText, {
-              color: isScrollFabDragging ? '#FFD700' : 'white'
+            <Text style={[styles.scrollFabProgress, {
+              color: isScrollFabDragging ? '#FFD700' : 'white',
+              fontSize: isScrollFabDragging ? 10 : 8,
             }]}>
-              {isScrollFabDragging ? 'Scrolling...' : 'Drag'}
+              {Math.round(currentProgress * 100)}%
             </Text>
-            <View style={[styles.scrollProgressRing, {
-              backgroundColor: isScrollFabDragging ? 'rgba(255, 215, 0, 0.3)' : 'rgba(255, 255, 255, 0.2)'
-            }]}>
-              <Text style={[styles.scrollFabProgress, {
-                color: isScrollFabDragging ? '#FFD700' : 'white'
-              }]}>
-                {Math.round(currentProgress * 100)}%
-              </Text>
-            </View>
-            
-            {/* Add scroll direction indicator */}
-            {isScrollFabDragging && (
-              <View style={styles.scrollDirectionIndicator}>
-                <View style={styles.scrollDirectionDots}>
-                  <View style={[styles.scrollDot, { opacity: 0.3 }]} />
-                  <View style={[styles.scrollDot, { opacity: 0.6 }]} />
-                  <View style={[styles.scrollDot, { opacity: 1.0 }]} />
-                </View>
-              </View>
-            )}
           </>
         )}
       </View>
@@ -1123,13 +1109,16 @@ const renderScrollFab = () => {
             style={[styles.textContainer, { backgroundColor: dynamicStyles.backgroundColor }]}
             ref={scrollViewRef}
             onScroll={handleScroll}
-            scrollEventThrottle={100} // Increased from 16 to reduce frequency
+            scrollEventThrottle={100} // INCREASE this to reduce frequency
             showsVerticalScrollIndicator={true}
-            bounces={Platform.OS === 'ios'}
+            bounces={false} // DISABLE bounces to prevent extra events
             decelerationRate="normal"
             removeClippedSubviews={true}
             keyboardShouldPersistTaps="handled"
             contentInsetAdjustmentBehavior="automatic"
+            // REMOVE these - they're causing conflicts:
+            // onScrollBeginDrag={() => setIsScrolling(true)}
+            // onScrollEndDrag={() => {}}
           >
         <Surface style={[styles.textContent, { backgroundColor: dynamicStyles.backgroundColor }]}>
           <View style={styles.textHeader}>
