@@ -28,7 +28,7 @@ import {
   Snackbar,
   ProgressBar,
 } from 'react-native-paper';
-import { LinearGradient } from '../../components/shared/LinearGradient';
+import { LinearGradient } from '../../../components/shared/LinearGradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 // Design system imports
@@ -39,27 +39,264 @@ import { TEXT_STYLES } from '../../styles/textStyles';
 const { width: screenWidth } = Dimensions.get('window');
 
 const SessionScheduleScreen = ({ navigation, route }) => {
+  // Define fallback constants at the top
+  const COLORS_FALLBACK = {
+    primary: '#667eea',
+    secondary: '#764ba2',
+    success: '#4CAF50',
+    error: '#F44336',
+    warning: '#FF9800',
+    background: '#f5f7fa',
+    surface: '#ffffff',
+    textPrimary: '#333333',
+    textSecondary: '#666666',
+    border: '#E0E0E0',
+  };
+
+  const SPACING_FALLBACK = {
+    xs: 4,
+    sm: 8,
+    md: 16,
+    lg: 24,
+    xl: 32,
+  };
+
+  const TEXT_STYLES_FALLBACK = {
+    h1: { fontSize: 28, fontWeight: 'bold' },
+    h2: { fontSize: 22, fontWeight: '600' },
+    h3: { fontSize: 18, fontWeight: '600' },
+    body1: { fontSize: 16, fontWeight: '400' },
+    body2: { fontSize: 14, fontWeight: '400' },
+    caption: { fontSize: 12, fontWeight: '400' },
+    subtitle1: { fontSize: 16, fontWeight: '500' },
+  };
+
+  // Use imported values or fallbacks
+  const colors = COLORS || COLORS_FALLBACK;
+  const spacing = SPACING || SPACING_FALLBACK;
+  const textStyles = TEXT_STYLES || TEXT_STYLES_FALLBACK;
+
   // Add parameter validation and defaults
   const params = route?.params || {};
   const sessionData = params.sessionData || null;
   const planTitle = params.planTitle || 'Training Session';
   const academyName = params.academyName || 'Training Academy';
 
+  // Define styles inside component to access colors safely
+  const styles = {
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    header: {
+      paddingTop: StatusBar.currentHeight + spacing.md,
+      paddingBottom: spacing.lg,
+      paddingHorizontal: spacing.md,
+    },
+    headerContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: spacing.sm,
+    },
+    headerInfo: {
+      flex: 1,
+      marginLeft: spacing.sm,
+    },
+    headerActions: {
+      flexDirection: 'row',
+    },
+    progressContainer: {
+      paddingHorizontal: spacing.lg,
+    },
+    progressBar: {
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: 'rgba(255,255,255,0.3)',
+    },
+    tabContainer: {
+      elevation: 2,
+    },
+    tab: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      marginHorizontal: spacing.xs,
+    },
+    activeTab: {
+      borderBottomWidth: 2,
+      borderBottomColor: colors.primary,
+    },
+    tabText: {
+      marginLeft: spacing.xs,
+      fontSize: 12,
+      fontWeight: '500',
+    },
+    content: {
+      flex: 1,
+    },
+    sessionInfoCard: {
+      margin: spacing.md,
+      padding: spacing.lg,
+      borderRadius: 12,
+      elevation: 2,
+    },
+    sessionInfoHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: spacing.md,
+    },
+    sessionInfoDetails: {
+      flex: 1,
+      marginLeft: spacing.md,
+    },
+    sessionMetrics: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+    },
+    metricItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginRight: spacing.md,
+      marginTop: spacing.xs,
+    },
+    sessionChips: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+    },
+    chip: {
+      marginRight: spacing.xs,
+      marginBottom: spacing.xs,
+    },
+    tabContent: {
+      padding: spacing.md,
+      paddingTop: 0,
+    },
+    sectionCard: {
+      marginBottom: spacing.md,
+      borderRadius: 12,
+      elevation: 2,
+    },
+    overviewStats: {
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+    },
+    statItem: {
+      alignItems: 'center',
+      flex: 1,
+    },
+    statNumber: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: colors.textPrimary,
+      marginTop: spacing.xs,
+    },
+    statLabel: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      marginTop: spacing.xs / 2,
+    },
+    objectiveItem: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      marginBottom: spacing.sm,
+    },
+    scheduleDay: {
+      marginBottom: spacing.md,
+      paddingBottom: spacing.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.surface,
+    },
+    dayHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: spacing.xs,
+    },
+    drillItem: {
+      marginBottom: spacing.md,
+      paddingBottom: spacing.md,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.surface,
+    },
+    drillHeader: {
+      paddingVertical: spacing.xs,
+    },
+    drillInfo: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    progressCircle: {
+      alignItems: 'center',
+      marginVertical: spacing.lg,
+    },
+    progressBarLarge: {
+      width: '100%',
+      height: 8,
+      borderRadius: 4,
+      marginVertical: spacing.md,
+    },
+    progressStats: {
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+      marginTop: spacing.md,
+    },
+    progressStat: {
+      alignItems: 'center',
+    },
+    progressStatNumber: {
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: colors.primary,
+    },
+    progressStatLabel: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      marginTop: spacing.xs,
+    },
+    completedDrill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: spacing.sm,
+    },
+    notesInput: {
+      padding: spacing.md,
+      borderRadius: 8,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    fab: {
+      position: 'absolute',
+      margin: spacing.md,
+      right: 0,
+      bottom: 0,
+    },
+    errorContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: spacing.xl,
+      backgroundColor: colors.background,
+    },
+  };
+
   // Early return if no session data
   if (!sessionData) {
     return (
       <View style={styles.errorContainer}>
-        <Icon name="error" size={64} color={COLORS.error} />
-        <Text style={[TEXT_STYLES.h3, { marginTop: SPACING.md }]}>
+        <Icon name="error" size={64} color={colors.error} />
+        <Text style={[textStyles.h3, { marginTop: spacing.md }]}>
           Session Not Found
         </Text>
-        <Text style={[TEXT_STYLES.body1, { textAlign: 'center', marginTop: SPACING.sm }]}>
+        <Text style={[textStyles.body1, { textAlign: 'center', marginTop: spacing.sm }]}>
           Could not load session details. Please try again.
         </Text>
         <Button 
           mode="contained" 
           onPress={() => navigation.goBack()}
-          style={{ marginTop: SPACING.md }}
+          style={{ marginTop: spacing.md }}
         >
           Go Back
         </Button>
@@ -167,15 +404,15 @@ const SessionScheduleScreen = ({ navigation, route }) => {
   };
 
   const getDifficultyColor = (difficulty) => {
-    const colors = {
-      'Beginner': COLORS.success,
+    const difficultyColors = {
+      'Beginner': colors.success,
       'Intermediate': '#FF9800',
-      'Advanced': COLORS.error,
-      'beginner': COLORS.success,
+      'Advanced': colors.error,
+      'beginner': colors.success,
       'intermediate': '#FF9800',
-      'advanced': COLORS.error,
+      'advanced': colors.error,
     };
-    return colors[difficulty] || COLORS.textSecondary;
+    return difficultyColors[difficulty] || colors.textSecondary;
   };
 
   const renderHeader = () => (
@@ -191,10 +428,10 @@ const SessionScheduleScreen = ({ navigation, route }) => {
           onPress={() => navigation.goBack()}
         />
         <View style={styles.headerInfo}>
-          <Text style={[TEXT_STYLES.h3, { color: 'white' }]}>
+          <Text style={[textStyles.h3, { color: 'white' }]}>
             {session.title}
           </Text>
-          <Text style={[TEXT_STYLES.caption, { color: 'rgba(255,255,255,0.8)' }]}>
+          <Text style={[textStyles.caption, { color: 'rgba(255,255,255,0.8)' }]}>
             {academyName} • {planTitle}
           </Text>
         </View>
@@ -211,7 +448,7 @@ const SessionScheduleScreen = ({ navigation, route }) => {
       {/* Session Progress */}
       {sessionStarted && (
         <View style={styles.progressContainer}>
-          <Text style={[TEXT_STYLES.caption, { color: 'white', marginBottom: SPACING.xs }]}>
+          <Text style={[textStyles.caption, { color: 'white', marginBottom: spacing.xs }]}>
             Session Progress: {Math.round(sessionProgress)}%
           </Text>
           <ProgressBar
@@ -230,22 +467,22 @@ const SessionScheduleScreen = ({ navigation, route }) => {
         <Avatar.Text
           size={48}
           label={academyName.charAt(0)}
-          style={{ backgroundColor: COLORS.primary }}
+          style={{ backgroundColor: colors.primary }}
         />
         <View style={styles.sessionInfoDetails}>
-          <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.xs }]}>
+          <Text style={[textStyles.h3, { marginBottom: spacing.xs }]}>
             {session.title}
           </Text>
           <View style={styles.sessionMetrics}>
             <View style={styles.metricItem}>
-              <Icon name="schedule" size={16} color={COLORS.textSecondary} />
-              <Text style={[TEXT_STYLES.caption, { marginLeft: 4 }]}>
+              <Icon name="schedule" size={16} color={colors.textSecondary} />
+              <Text style={[textStyles.caption, { marginLeft: 4 }]}>
                 {session.time} • {session.duration}min
               </Text>
             </View>
             <View style={styles.metricItem}>
-              <Icon name="location-on" size={16} color={COLORS.textSecondary} />
-              <Text style={[TEXT_STYLES.caption, { marginLeft: 4 }]}>
+              <Icon name="location-on" size={16} color={colors.textSecondary} />
+              <Text style={[textStyles.caption, { marginLeft: 4 }]}>
                 {session.location || 'Training Field'}
               </Text>
             </View>
@@ -296,26 +533,26 @@ const SessionScheduleScreen = ({ navigation, route }) => {
       {/* Week Information */}
       <Card style={styles.sectionCard}>
         <Card.Content>
-          <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.md }]}>
+          <Text style={[textStyles.h3, { marginBottom: spacing.md }]}>
             Week {session.week} Overview
           </Text>
-          <Text style={[TEXT_STYLES.body1, { lineHeight: 24, marginBottom: SPACING.md }]}>
+          <Text style={[textStyles.body1, { lineHeight: 24, marginBottom: spacing.md }]}>
             {session.weekDescription || session.description}
           </Text>
           
           <View style={styles.overviewStats}>
             <View style={styles.statItem}>
-              <Icon name="fitness-center" size={24} color={COLORS.primary} />
+              <Icon name="fitness-center" size={24} color={colors.primary} />
               <Text style={styles.statNumber}>{session.drills?.length || 0}</Text>
               <Text style={styles.statLabel}>Drills</Text>
             </View>
             <View style={styles.statItem}>
-              <Icon name="schedule" size={24} color={COLORS.primary} />
+              <Icon name="schedule" size={24} color={colors.primary} />
               <Text style={styles.statNumber}>{session.duration}</Text>
               <Text style={styles.statLabel}>Minutes</Text>
             </View>
             <View style={styles.statItem}>
-              <Icon name="group" size={24} color={COLORS.primary} />
+              <Icon name="group" size={24} color={colors.primary} />
               <Text style={styles.statNumber}>{session.participants || 'N/A'}</Text>
               <Text style={styles.statLabel}>Players</Text>
             </View>
@@ -327,13 +564,13 @@ const SessionScheduleScreen = ({ navigation, route }) => {
       {session.objectives && session.objectives.length > 0 && (
         <Card style={styles.sectionCard}>
           <Card.Content>
-            <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.md }]}>
+            <Text style={[textStyles.h3, { marginBottom: spacing.md }]}>
               Session Objectives
             </Text>
             {session.objectives.map((objective, index) => (
               <View key={index} style={styles.objectiveItem}>
-                <Icon name="flag" size={16} color={COLORS.primary} />
-                <Text style={[TEXT_STYLES.body2, { flex: 1, marginLeft: SPACING.sm }]}>
+                <Icon name="flag" size={16} color={colors.primary} />
+                <Text style={[textStyles.body2, { flex: 1, marginLeft: spacing.sm }]}>
                   {objective}
                 </Text>
               </View>
@@ -346,20 +583,20 @@ const SessionScheduleScreen = ({ navigation, route }) => {
       {session.weekSchedule && (
         <Card style={styles.sectionCard}>
           <Card.Content>
-            <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.md }]}>
+            <Text style={[textStyles.h3, { marginBottom: spacing.md }]}>
               Training Schedule
             </Text>
             {session.weekSchedule.map((day, index) => (
               <View key={index} style={styles.scheduleDay}>
                 <View style={styles.dayHeader}>
-                  <Text style={[TEXT_STYLES.subtitle1, { fontWeight: 'bold' }]}>
+                  <Text style={[textStyles.subtitle1, { fontWeight: 'bold' }]}>
                     {day.day}
                   </Text>
-                  <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
+                  <Text style={[textStyles.caption, { color: colors.textSecondary }]}>
                     {day.time} • {day.duration}
                   </Text>
                 </View>
-                <Text style={[TEXT_STYLES.body2, { color: COLORS.textSecondary }]}>
+                <Text style={[textStyles.body2, { color: colors.textSecondary }]}>
                   {day.focus || 'Training Session'}
                 </Text>
               </View>
@@ -375,10 +612,10 @@ const SessionScheduleScreen = ({ navigation, route }) => {
       {/* Document Content */}
       <Card style={styles.sectionCard}>
         <Card.Content>
-          <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.md }]}>
+          <Text style={[textStyles.h3, { marginBottom: spacing.md }]}>
             Training Plan Details
           </Text>
-          <Text style={[TEXT_STYLES.body1, { lineHeight: 22 }]}>
+          <Text style={[textStyles.body1, { lineHeight: 22 }]}>
             {session.documentContent || session.rawContent || 'No detailed training plan content available.'}
           </Text>
         </Card.Content>
@@ -388,7 +625,7 @@ const SessionScheduleScreen = ({ navigation, route }) => {
       {session.drills && session.drills.length > 0 && (
         <Card style={styles.sectionCard}>
           <Card.Content>
-            <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.md }]}>
+            <Text style={[textStyles.h3, { marginBottom: spacing.md }]}>
               Training Drills ({session.drills.length})
             </Text>
             {session.drills.map((drill, index) => (
@@ -401,14 +638,14 @@ const SessionScheduleScreen = ({ navigation, route }) => {
                     <Icon
                       name={completedDrills.has(drill.id || index) ? "check-circle" : "radio-button-unchecked"}
                       size={24}
-                      color={completedDrills.has(drill.id || index) ? COLORS.success : COLORS.textSecondary}
+                      color={completedDrills.has(drill.id || index) ? colors.success : colors.textSecondary}
                     />
-                    <View style={{ flex: 1, marginLeft: SPACING.sm }}>
-                      <Text style={[TEXT_STYLES.subtitle1, { fontWeight: 'bold' }]}>
+                    <View style={{ flex: 1, marginLeft: spacing.sm }}>
+                      <Text style={[textStyles.subtitle1, { fontWeight: 'bold' }]}>
                         {drill.name || drill.title || `Drill ${index + 1}`}
                       </Text>
                       {drill.duration && (
-                        <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
+                        <Text style={[textStyles.caption, { color: colors.textSecondary }]}>
                           Duration: {drill.duration} minutes
                         </Text>
                       )}
@@ -417,18 +654,18 @@ const SessionScheduleScreen = ({ navigation, route }) => {
                 </TouchableOpacity>
                 
                 {drill.description && (
-                  <Text style={[TEXT_STYLES.body2, { 
-                    marginTop: SPACING.sm, 
+                  <Text style={[textStyles.body2, { 
+                    marginTop: spacing.sm, 
                     marginLeft: 36,
-                    color: COLORS.textSecondary 
+                    color: colors.textSecondary 
                   }]}>
                     {drill.description}
                   </Text>
                 )}
 
                 {drill.instructions && (
-                  <Text style={[TEXT_STYLES.body2, { 
-                    marginTop: SPACING.xs, 
+                  <Text style={[textStyles.body2, { 
+                    marginTop: spacing.xs, 
                     marginLeft: 36,
                     fontStyle: 'italic' 
                   }]}>
@@ -447,22 +684,22 @@ const SessionScheduleScreen = ({ navigation, route }) => {
     <View style={styles.tabContent}>
       <Card style={styles.sectionCard}>
         <Card.Content>
-          <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.md }]}>
+          <Text style={[textStyles.h3, { marginBottom: spacing.md }]}>
             Session Progress
           </Text>
           
           <View style={styles.progressCircle}>
-            <Text style={[TEXT_STYLES.h1, { color: COLORS.primary }]}>
+            <Text style={[textStyles.h1, { color: colors.primary }]}>
               {Math.round(sessionProgress)}%
             </Text>
-            <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
+            <Text style={[textStyles.caption, { color: colors.textSecondary }]}>
               Complete
             </Text>
           </View>
           
           <ProgressBar
             progress={sessionProgress / 100}
-            color={COLORS.primary}
+            color={colors.primary}
             style={styles.progressBarLarge}
           />
           
@@ -487,15 +724,15 @@ const SessionScheduleScreen = ({ navigation, route }) => {
       {completedDrills.size > 0 && (
         <Card style={styles.sectionCard}>
           <Card.Content>
-            <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.md }]}>
+            <Text style={[textStyles.h3, { marginBottom: spacing.md }]}>
               Completed Drills
             </Text>
             {Array.from(completedDrills).map((drillId, index) => {
               const drill = session.drills?.find((d, i) => d.id === drillId || i === drillId);
               return (
                 <View key={index} style={styles.completedDrill}>
-                  <Icon name="check-circle" size={20} color={COLORS.success} />
-                  <Text style={[TEXT_STYLES.body1, { marginLeft: SPACING.sm }]}>
+                  <Icon name="check-circle" size={20} color={colors.success} />
+                  <Text style={[textStyles.body1, { marginLeft: spacing.sm }]}>
                     {drill?.name || drill?.title || `Drill ${drillId + 1}`}
                   </Text>
                 </View>
@@ -511,15 +748,15 @@ const SessionScheduleScreen = ({ navigation, route }) => {
     <View style={styles.tabContent}>
       <Card style={styles.sectionCard}>
         <Card.Content>
-          <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.md }]}>
+          <Text style={[textStyles.h3, { marginBottom: spacing.md }]}>
             Session Notes
           </Text>
-          <Text style={[TEXT_STYLES.body2, { color: COLORS.textSecondary, marginBottom: SPACING.md }]}>
+          <Text style={[textStyles.body2, { color: colors.textSecondary, marginBottom: spacing.md }]}>
             Add your observations, player performance notes, and improvements for future sessions.
           </Text>
           
           <Surface style={styles.notesInput}>
-            <Text style={[TEXT_STYLES.body1, { minHeight: 100 }]}>
+            <Text style={[textStyles.body1, { minHeight: 100 }]}>
               {sessionNotes || 'Tap to add notes...'}
             </Text>
           </Surface>
@@ -530,7 +767,7 @@ const SessionScheduleScreen = ({ navigation, route }) => {
               setSnackbarMessage('Notes feature will be available in the next update');
               setSnackbarVisible(true);
             }}
-            style={{ marginTop: SPACING.md }}
+            style={{ marginTop: spacing.md }}
           >
             Edit Notes
           </Button>
@@ -541,10 +778,10 @@ const SessionScheduleScreen = ({ navigation, route }) => {
       {session.coachNotes && (
         <Card style={styles.sectionCard}>
           <Card.Content>
-            <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.md }]}>
+            <Text style={[textStyles.h3, { marginBottom: spacing.md }]}>
               Coach Recommendations
             </Text>
-            <Text style={[TEXT_STYLES.body1, { lineHeight: 22 }]}>
+            <Text style={[textStyles.body1, { lineHeight: 22 }]}>
               {session.coachNotes}
             </Text>
           </Card.Content>
@@ -568,12 +805,12 @@ const SessionScheduleScreen = ({ navigation, route }) => {
             <Icon
               name={tab.icon}
               size={20}
-              color={activeTab === tab.key ? COLORS.primary : COLORS.textSecondary}
+              color={activeTab === tab.key ? colors.primary : colors.textSecondary}
             />
             <Text
               style={[
                 styles.tabText,
-                { color: activeTab === tab.key ? COLORS.primary : COLORS.textSecondary }
+                { color: activeTab === tab.key ? colors.primary : colors.textSecondary }
               ]}
             >
               {tab.label}
@@ -586,7 +823,7 @@ const SessionScheduleScreen = ({ navigation, route }) => {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.primary} translucent />
+      <StatusBar barStyle="light-content" backgroundColor={colors.primary} translucent />
       
       {renderHeader()}
       {renderTabNavigation()}
@@ -605,7 +842,7 @@ const SessionScheduleScreen = ({ navigation, route }) => {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              colors={[COLORS.primary]}
+              colors={[colors.primary]}
             />
           }
           showsVerticalScrollIndicator={false}
@@ -620,7 +857,7 @@ const SessionScheduleScreen = ({ navigation, route }) => {
         icon={sessionStarted ? "stop" : "play-arrow"}
         style={[
           styles.fab,
-          { backgroundColor: sessionStarted ? COLORS.error : COLORS.success }
+          { backgroundColor: sessionStarted ? colors.error : colors.success }
         ]}
         onPress={handleStartSession}
         label={sessionStarted ? "End Session" : "Start Session"}
@@ -632,212 +869,13 @@ const SessionScheduleScreen = ({ navigation, route }) => {
           visible={snackbarVisible}
           onDismiss={() => setSnackbarVisible(false)}
           duration={3000}
-          style={{ backgroundColor: COLORS.success }}
+          style={{ backgroundColor: colors.success }}
         >
           <Text style={{ color: 'white' }}>{snackbarMessage}</Text>
         </Snackbar>
       </Portal>
     </View>
   );
-};
-
-const styles = {
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  header: {
-    paddingTop: StatusBar.currentHeight + SPACING.md,
-    paddingBottom: SPACING.lg,
-    paddingHorizontal: SPACING.md,
-  },
-  headerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: SPACING.sm,
-  },
-  headerInfo: {
-    flex: 1,
-    marginLeft: SPACING.sm,
-  },
-  headerActions: {
-    flexDirection: 'row',
-  },
-  progressContainer: {
-    paddingHorizontal: SPACING.lg,
-  },
-  progressBar: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.3)',
-  },
-  tabContainer: {
-    elevation: 2,
-  },
-  tab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.sm,
-    marginHorizontal: SPACING.xs,
-  },
-  activeTab: {
-    borderBottomWidth: 2,
-    borderBottomColor: COLORS.primary,
-  },
-  tabText: {
-    marginLeft: SPACING.xs,
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  content: {
-    flex: 1,
-  },
-  sessionInfoCard: {
-    margin: SPACING.md,
-    padding: SPACING.lg,
-    borderRadius: 12,
-    elevation: 2,
-  },
-  sessionInfoHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: SPACING.md,
-  },
-  sessionInfoDetails: {
-    flex: 1,
-    marginLeft: SPACING.md,
-  },
-  sessionMetrics: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  metricItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginRight: SPACING.md,
-    marginTop: SPACING.xs,
-  },
-  sessionChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  chip: {
-    marginRight: SPACING.xs,
-    marginBottom: SPACING.xs,
-  },
-  tabContent: {
-    padding: SPACING.md,
-    paddingTop: 0,
-  },
-  sectionCard: {
-    marginBottom: SPACING.md,
-    borderRadius: 12,
-    elevation: 2,
-  },
-  overviewStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  statItem: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  statNumber: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: COLORS.textPrimary,
-    marginTop: SPACING.xs,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: SPACING.xs / 2,
-  },
-  objectiveItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: SPACING.sm,
-  },
-  scheduleDay: {
-    marginBottom: SPACING.md,
-    paddingBottom: SPACING.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.surface,
-  },
-  dayHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: SPACING.xs,
-  },
-  drillItem: {
-    marginBottom: SPACING.md,
-    paddingBottom: SPACING.md,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.surface,
-  },
-  drillHeader: {
-    paddingVertical: SPACING.xs,
-  },
-  drillInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  progressCircle: {
-    alignItems: 'center',
-    marginVertical: SPACING.lg,
-  },
-  progressBarLarge: {
-    width: '100%',
-    height: 8,
-    borderRadius: 4,
-    marginVertical: SPACING.md,
-  },
-  progressStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginTop: SPACING.md,
-  },
-  progressStat: {
-    alignItems: 'center',
-  },
-  progressStatNumber: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: COLORS.primary,
-  },
-  progressStatLabel: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    marginTop: SPACING.xs,
-  },
-  completedDrill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: SPACING.sm,
-  },
-  notesInput: {
-    padding: SPACING.md,
-    borderRadius: 8,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  fab: {
-    position: 'absolute',
-    margin: SPACING.md,
-    right: 0,
-    bottom: 0,
-  },
-  errorContainer: {
-  flex: 1,
-  justifyContent: 'center',
-  alignItems: 'center',
-  padding: SPACING.xl,
-  backgroundColor: COLORS.background,
-},
 };
 
 export default SessionScheduleScreen;

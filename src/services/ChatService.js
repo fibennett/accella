@@ -2047,7 +2047,7 @@ async performFieldSearch(field, query, abortSignal = null, requestId = null) {
     try {
       if (!this.isOnline) return;
       
-      console.log('Processing pending chat operations...');
+      //console.log('Processing pending chat operations...');
       
       // Process message queue
       this.processNextMessage();

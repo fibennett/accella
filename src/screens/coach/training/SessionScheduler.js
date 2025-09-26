@@ -36,7 +36,7 @@ import { useSelector, useDispatch } from 'react-redux';
 // Services
 import SessionExtractor from '../../../services/SessionExtractor';
 import DocumentProcessor from '../../../services/DocumentProcessor';
-
+import SessionScheduleScreen from './src/screens/coach/training/SessionScheduleScreen';
 // Design system
 import { COLORS } from '../../../styles/colors';
 import { SPACING } from '../../../styles/spacing';
@@ -56,6 +56,22 @@ import Animated, {
 const { width, height } = Dimensions.get('window');
 
 const SessionScheduler = ({ navigation }) => {
+  const COLORS_FALLBACK = {
+    primary: '#667eea',
+    secondary: '#764ba2',
+    success: '#4CAF50',
+    error: '#F44336',
+    warning: '#FF9800',
+    info: '#2196F3',
+    background: '#f5f7fa',
+    surface: '#ffffff',
+    textPrimary: '#333333',
+    textSecondary: '#666666',
+    text: '#333333',
+    white: '#ffffff',
+    border: '#E0E0E0'
+  };
+
   const dispatch = useDispatch();
   const { user, coachData } = useSelector((state) => state.auth);
 
@@ -94,12 +110,12 @@ const SessionScheduler = ({ navigation }) => {
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   const sessionTypes = [
-    { id: 'training', label: 'Training', icon: 'fitness-center', color: COLORS.primary },
-    { id: 'meeting', label: 'Meeting', icon: 'meeting-room', color: COLORS.secondary },
-    { id: 'individual', label: 'Individual', icon: 'person', color: COLORS.success },
-    { id: 'assessment', label: 'Assessment', icon: 'assessment', color: COLORS.warning },
-    { id: 'recovery', label: 'Recovery', icon: 'spa', color: COLORS.info },
-    { id: 'match', label: 'Match', icon: 'sports-soccer', color: COLORS.error },
+    { id: 'training', label: 'Training', icon: 'fitness-center', color: COLORS?.primary || COLORS_FALLBACK.primary },
+    { id: 'meeting', label: 'Meeting', icon: 'meeting-room', color: COLORS?.secondary || COLORS_FALLBACK.secondary },
+    { id: 'individual', label: 'Individual', icon: 'person', color: COLORS?.success || COLORS_FALLBACK.success },
+    { id: 'assessment', label: 'Assessment', icon: 'assessment', color: COLORS?.warning || COLORS_FALLBACK.warning },
+    { id: 'recovery', label: 'Recovery', icon: 'spa', color: COLORS?.info || COLORS_FALLBACK.info },
+    { id: 'match', label: 'Match', icon: 'sports-soccer', color: COLORS?.error || COLORS_FALLBACK.error },
   ];
 
   const timeSlots = Array.from({ length: 15 }, (_, i) => {
@@ -132,14 +148,14 @@ const SessionScheduler = ({ navigation }) => {
       setTrainingPlans(plans);
       console.log('Loaded training plans:', plans.length);
 
-      // Extract sessions from all training plans
+      // Extract sessions from all training plans with extracted sessions
       const allExtractedSessions = [];
       
       for (const plan of plans) {
         try {
           console.log('Processing plan:', plan.title);
           
-          // Check if we have a source document for this plan
+          // Check if plan has a source document and can extract sessions
           if (plan.sourceDocument) {
             const documents = await DocumentProcessor.getStoredDocuments();
             const sourceDoc = documents.find(doc => doc.id === plan.sourceDocument);
@@ -151,10 +167,62 @@ const SessionScheduler = ({ navigation }) => {
               const extractionResult = await SessionExtractor.extractSessionsFromDocument(sourceDoc, plan);
               
               if (extractionResult && extractionResult.sessions) {
-                // Convert to upcoming sessions format
-                const upcomingSessions = SessionExtractor.convertToUpcomingSessions(extractionResult);
-                allExtractedSessions.push(...upcomingSessions);
-                console.log('Extracted sessions for plan:', plan.title, 'Count:', upcomingSessions.length);
+                // Convert weekly sessions to individual daily sessions
+                extractionResult.sessions.forEach((weekSession, weekIndex) => {
+                  // Add the week session itself
+                  const weekSessionData = {
+                    id: `week_${weekSession.id}`,
+                    title: `${plan.title} - ${weekSession.title}`,
+                    day: 'week_overview',
+                    date: calculateSessionDate(weekIndex + 1, 'monday'),
+                    time: '08:00',
+                    duration: weekSession.totalDuration || 120,
+                    location: 'Training Facility',
+                    type: 'Weekly Plan',
+                    participants: 15,
+                    status: 'scheduled',
+                    academyName: plan.title,
+                    sport: plan.category || 'General',
+                    ageGroup: extractionResult.academyInfo?.ageGroup || 'Youth',
+                    difficulty: plan.difficulty || 'intermediate',
+                    weekNumber: weekSession.weekNumber,
+                    weekData: weekSession,
+                    planTitle: plan.title,
+                    sourcePlan: plan.id,
+                    sourceDocument: sourceDoc.id,
+                    isWeekOverview: true,
+                    focus: weekSession.focus || [],
+                    notes: weekSession.description || '',
+                    activities: [],
+                    drills: [],
+                    objectives: []
+                  };
+                  
+                  allExtractedSessions.push(weekSessionData);
+
+                  // Add individual daily sessions
+                  if (weekSession.dailySessions && weekSession.dailySessions.length > 0) {
+                    weekSession.dailySessions.forEach((dailySession, dayIndex) => {
+                      const enhancedDailySession = {
+                        ...dailySession,
+                        id: `daily_${dailySession.id}`,
+                        title: `${plan.title} - Week ${weekSession.weekNumber}, ${dailySession.day.charAt(0).toUpperCase() + dailySession.day.slice(1)} Training`,
+                        academyName: plan.title,
+                        sport: plan.category || 'General',
+                        planTitle: plan.title,
+                        sourcePlan: plan.id,
+                        sourceDocument: sourceDoc.id,
+                        weekData: weekSession,
+                        parentWeekSession: weekSessionData.id,
+                        isWeekOverview: false
+                      };
+                      
+                      allExtractedSessions.push(enhancedDailySession);
+                    });
+                  }
+                });
+                
+                console.log('Extracted sessions for plan:', plan.title, 'Total sessions:', allExtractedSessions.length);
               }
             } else {
               console.warn('Source document not found for plan:', plan.title);
@@ -170,7 +238,7 @@ const SessionScheduler = ({ navigation }) => {
       setExtractedSessions(allExtractedSessions);
       console.log('Total extracted sessions:', allExtractedSessions.length);
 
-      // Combine with manual sessions (from your existing mock data or database)
+      // Combine with manual sessions
       const combinedSessions = [
         ...allExtractedSessions,
         ...manualSessions
@@ -185,6 +253,24 @@ const SessionScheduler = ({ navigation }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Helper function to calculate session dates
+  const calculateSessionDate = (weekNumber, dayName) => {
+    const today = new Date();
+    const dayIndex = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+      .indexOf(dayName.toLowerCase());
+    
+    // Calculate the date for this session
+    const targetDate = new Date(today);
+    targetDate.setDate(today.getDate() + (weekNumber - 1) * 7);
+    
+    // Adjust to the correct day of week
+    const currentDay = targetDate.getDay();
+    const daysToAdd = (dayIndex - currentDay + 7) % 7;
+    targetDate.setDate(targetDate.getDate() + daysToAdd);
+    
+    return targetDate.toISOString().split('T')[0];
   };
 
   const onRefresh = useCallback(async () => {
@@ -251,10 +337,24 @@ const SessionScheduler = ({ navigation }) => {
   };
 
   const handleSessionPress = (session) => {
-    // Navigate to detailed session view
+    // Ensure we have all required data for SessionScheduleScreen
+    const sessionDataForNavigation = {
+      ...session,
+      // Ensure we have all required fields
+      id: session.id,
+      title: session.title,
+      academyName: session.academyName || 'Training Academy',
+      sport: session.sport || 'General',
+      weekNumber: session.weekNumber,
+      weekData: session.weekData || session,
+      planTitle: session.planTitle || 'Training Session',
+      sourcePlan: session.sourcePlan,
+      sourceDocument: session.sourceDocument
+    };
+
     navigation.navigate('SessionScheduleScreen', {
-      sessionData: session,
-      planTitle: session.trainingPlanTitle || 'Training Session',
+      sessionData: sessionDataForNavigation,
+      planTitle: session.planTitle || 'Training Session',
       academyName: session.academyName || 'Training Academy'
     });
   };
@@ -310,14 +410,14 @@ const SessionScheduler = ({ navigation }) => {
 
   const getDifficultyColor = (difficulty) => {
     const colors = {
-      'Beginner': COLORS.success,
+      'Beginner': COLORS?.success || COLORS_FALLBACK.success,
       'Intermediate': '#FF9800',
-      'Advanced': COLORS.error,
-      'beginner': COLORS.success,
+      'Advanced': COLORS?.error || COLORS_FALLBACK.error,
+      'beginner': COLORS?.success || COLORS_FALLBACK.success,
       'intermediate': '#FF9800',
-      'advanced': COLORS.error,
+      'advanced': COLORS?.error || COLORS_FALLBACK.error,
     };
-    return colors[difficulty] || COLORS.textSecondary;
+    return colors[difficulty] || (COLORS?.textSecondary || COLORS_FALLBACK.textSecondary);
   };
 
   const formatSessionDate = (date) => {
@@ -371,6 +471,173 @@ const SessionScheduler = ({ navigation }) => {
     groups[date].push(session);
     return groups;
   }, {});
+
+  const styles = {
+    container: {
+      flex: 1,
+      backgroundColor: COLORS?.background || COLORS_FALLBACK.background,
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: COLORS?.background || COLORS_FALLBACK.background,
+    },
+    content: {
+      flex: 1,
+      padding: SPACING?.md || 16,
+    },
+    statCard: {
+      flex: 1,
+      padding: SPACING?.sm || 8,
+      borderRadius: 12,
+      alignItems: 'center',
+      backgroundColor: 'rgba(255,255,255,0.9)',
+      marginHorizontal: 4,
+    },
+    statNumber: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: COLORS?.primary || COLORS_FALLBACK.primary,
+    },
+    statLabel: {
+      fontSize: 12,
+      color: COLORS?.textSecondary || COLORS_FALLBACK.textSecondary,
+      marginTop: 2,
+    },
+    dateSection: {
+      marginBottom: SPACING?.lg || 24,
+    },
+    dateHeader: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      color: COLORS?.textPrimary || COLORS_FALLBACK.textPrimary,
+      marginBottom: SPACING?.md || 16,
+      paddingHorizontal: SPACING?.xs || 4,
+    },
+    sessionCard: {
+      marginBottom: SPACING?.md || 16,
+      borderRadius: 16,
+      elevation: 3,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.15,
+      shadowRadius: 8,
+      overflow: 'hidden',
+    },
+    cardHeader: {
+      padding: SPACING?.md || 16,
+    },
+    sessionHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+    },
+    sessionInfo: {
+      flex: 1,
+    },
+    participantsSection: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: SPACING?.sm || 8,
+    },
+    cardContent: {
+      paddingTop: SPACING?.sm || 8,
+      paddingBottom: SPACING?.md || 16,
+    },
+    cardActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      alignItems: 'center',
+      marginTop: SPACING?.md || 16,
+      paddingTop: SPACING?.sm || 8,
+      borderTopWidth: 1,
+      borderTopColor: '#f0f0f0',
+    },
+    emptyState: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: SPACING?.xl || 32,
+    },
+    fab: {
+      position: 'absolute',
+      margin: 16,
+      right: 0,
+      bottom: 0,
+      backgroundColor: COLORS?.primary || COLORS_FALLBACK.primary,
+    },
+    modalOverlay: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: SPACING?.lg || 24,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    },
+    modalContent: {
+      width: '100%',
+      maxWidth: 400,
+      maxHeight: '90%',
+      borderRadius: 16,
+      padding: SPACING?.lg || 24,
+      backgroundColor: COLORS?.surface || COLORS_FALLBACK.surface,
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: SPACING?.lg || 24,
+      paddingBottom: SPACING?.md || 16,
+      borderBottomWidth: 1,
+      borderBottomColor: '#e0e0e0',
+    },
+    textInput: {
+      borderWidth: 1,
+      borderColor: '#ddd',
+      borderRadius: 8,
+      padding: SPACING?.md || 16,
+      marginBottom: SPACING?.md || 16,
+      fontSize: 16,
+      backgroundColor: COLORS?.surface || COLORS_FALLBACK.surface,
+      color: COLORS?.textPrimary || COLORS_FALLBACK.textPrimary,
+    },
+    sectionLabel: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: COLORS?.textPrimary || COLORS_FALLBACK.textPrimary,
+      marginBottom: SPACING?.sm || 8,
+      marginTop: SPACING?.sm || 8,
+    },
+    typeSelector: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      marginBottom: SPACING?.md || 16,
+    },
+    typeOption: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: SPACING?.md || 16,
+      paddingVertical: SPACING?.sm || 8,
+      borderRadius: 20,
+      margin: 4,
+      minWidth: 80,
+    },
+    typeText: {
+      marginLeft: 6,
+      fontSize: 12,
+      fontWeight: '500',
+    },
+    timeSection: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: SPACING?.lg || 24,
+    },
+    createButton: {
+      marginTop: SPACING?.lg || 24,
+      borderRadius: 8,
+      backgroundColor: COLORS?.primary || COLORS_FALLBACK.primary,
+    },
+  };
 
   const renderHeader = () => (
     <Animated.View entering={FadeInDown.delay(100)}>
@@ -429,8 +696,8 @@ const SessionScheduler = ({ navigation }) => {
             elevation: 0,
             borderRadius: 12,
           }}
-          iconColor={COLORS.primary}
-          inputStyle={{ color: COLORS.text }}
+          iconColor={COLORS?.primary || COLORS_FALLBACK.primary}
+          inputStyle={{ color: COLORS?.text || COLORS_FALLBACK.text }}
         />
       </LinearGradient>
     </Animated.View>
@@ -533,13 +800,13 @@ const SessionScheduler = ({ navigation }) => {
             <Card.Content style={styles.cardContent}>
               {/* Participants */}
               <View style={styles.participantsSection}>
-                <Icon name="group" size={16} color={COLORS.textSecondary} />
-                <Text style={[TEXT_STYLES.caption, { marginLeft: 4, color: COLORS.textSecondary }]}>
+                <Icon name="group" size={16} color={COLORS?.textSecondary || COLORS_FALLBACK.textSecondary} />
+                <Text style={[TEXT_STYLES.caption, { marginLeft: 4, color: COLORS?.textSecondary || COLORS_FALLBACK.textSecondary }]}>
                   {session.participants || 0} participants
                 </Text>
                 {session.status && (
                   <>
-                    <Text style={{ color: COLORS.textSecondary, marginHorizontal: 8 }}>•</Text>
+                    <Text style={{ color: COLORS?.textSecondary || COLORS_FALLBACK.textSecondary, marginHorizontal: 8 }}>•</Text>
                     <Chip
                       compact
                       mode="outlined"
@@ -555,7 +822,7 @@ const SessionScheduler = ({ navigation }) => {
               {/* Focus Areas */}
               {session.focus && session.focus.length > 0 && (
                 <View style={{ marginTop: SPACING.sm }}>
-                  <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary, marginBottom: 4 }]}>
+                  <Text style={[TEXT_STYLES.caption, { color: COLORS?.textSecondary || COLORS_FALLBACK.textSecondary, marginBottom: 4 }]}>
                     Focus Areas:
                   </Text>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
@@ -589,7 +856,7 @@ const SessionScheduler = ({ navigation }) => {
                   mode="contained"
                   compact
                   onPress={() => handleStartSession(session)}
-                  style={{ backgroundColor: COLORS.success }}
+                  style={{ backgroundColor: COLORS?.success || COLORS_FALLBACK.success }}
                   contentStyle={{ height: 32 }}
                 >
                   Start Session
@@ -631,8 +898,8 @@ const SessionScheduler = ({ navigation }) => {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={[COLORS.primary]}
-            tintColor={COLORS.primary}
+            colors={[COLORS?.primary || COLORS_FALLBACK.primary]}
+            tintColor={COLORS?.primary || COLORS_FALLBACK.primary}
           />
         }
         showsVerticalScrollIndicator={false}
@@ -643,12 +910,12 @@ const SessionScheduler = ({ navigation }) => {
 
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
-      <Icon name="event-available" size={80} color={COLORS.textSecondary} />
-      <Text style={[TEXT_STYLES.h3, { color: COLORS.textSecondary, marginTop: 16 }]}>
+      <Icon name="event-available" size={80} color={COLORS?.textSecondary || COLORS_FALLBACK.textSecondary} />
+      <Text style={[TEXT_STYLES.h3, { color: COLORS?.textSecondary || COLORS_FALLBACK.textSecondary, marginTop: 16 }]}>
         No sessions scheduled
       </Text>
       <Text style={[TEXT_STYLES.body, { 
-        color: COLORS.textSecondary, 
+        color: COLORS?.textSecondary || COLORS_FALLBACK.textSecondary, 
         textAlign: 'center', 
         marginTop: 8,
         marginHorizontal: 32 
@@ -772,7 +1039,7 @@ const SessionScheduler = ({ navigation }) => {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
+        <ActivityIndicator size="large" color={COLORS?.primary || COLORS_FALLBACK.primary} />
         <Text style={{ marginTop: 16 }}>Loading sessions...</Text>
       </View>
     );
@@ -800,180 +1067,13 @@ const SessionScheduler = ({ navigation }) => {
           visible={snackbarVisible}
           onDismiss={() => setSnackbarVisible(false)}
           duration={3000}
-          style={{ backgroundColor: COLORS.success }}
+          style={{ backgroundColor: COLORS?.success || COLORS_FALLBACK.success }}
         >
           <Text style={{ color: 'white' }}>{snackbarMessage}</Text>
         </Snackbar>
       </Portal>
     </View>
   );
-};
-
-const styles = {
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.background,
-  },
-  content: {
-    flex: 1,
-    padding: SPACING.md,
-  },
-  statCard: {
-    flex: 1,
-    padding: SPACING.sm,
-    borderRadius: 12,
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.9)',
-    marginHorizontal: 4,
-  },
-  statNumber: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: COLORS.primary,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  dateSection: {
-    marginBottom: SPACING.lg,
-  },
-  dateHeader: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: COLORS.textPrimary,
-    marginBottom: SPACING.md,
-    paddingHorizontal: SPACING.xs,
-  },
-  sessionCard: {
-    marginBottom: SPACING.md,
-    borderRadius: 16,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    overflow: 'hidden',
-  },
-  cardHeader: {
-    padding: SPACING.md,
-  },
-  sessionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  sessionInfo: {
-    flex: 1,
-  },
-  participantsSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: SPACING.sm,
-  },
-  cardContent: {
-    paddingTop: SPACING.sm,
-    paddingBottom: SPACING.md,
-  },
-  cardActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    marginTop: SPACING.md,
-    paddingTop: SPACING.sm,
-    borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
-  },
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: SPACING.xl,
-  },
-  fab: {
-    position: 'absolute',
-    margin: 16,
-    right: 0,
-    bottom: 0,
-    backgroundColor: COLORS.primary,
-  },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: SPACING.lg,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  modalContent: {
-    width: '100%',
-    maxWidth: 400,
-    maxHeight: '90%',
-    borderRadius: 16,
-    padding: SPACING.lg,
-    backgroundColor: COLORS.surface,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: SPACING.lg,
-    paddingBottom: SPACING.md,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  textInput: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: SPACING.md,
-    marginBottom: SPACING.md,
-    fontSize: 16,
-    backgroundColor: COLORS.surface,
-    color: COLORS.textPrimary,
-  },
-  sectionLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-    marginBottom: SPACING.sm,
-    marginTop: SPACING.sm,
-  },
-  typeSelector: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: SPACING.md,
-  },
-  typeOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.sm,
-    borderRadius: 20,
-    margin: 4,
-    minWidth: 80,
-  },
-  typeText: {
-    marginLeft: 6,
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  timeSection: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: SPACING.lg,
-  },
-  createButton: {
-    marginTop: SPACING.lg,
-    borderRadius: 8,
-    backgroundColor: COLORS.primary,
-  },
 };
 
 export default SessionScheduler;

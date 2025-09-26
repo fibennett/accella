@@ -32,7 +32,7 @@ import RevenueTracking from '../screens/coach/dashboard/RevenueTracking';
 import WeatherIntegration from '../screens/coach/dashboard/WeatherIntegration';
 import NotificationsCenter from '../screens/coach/dashboard/NotificationsCenter';
 import QuickActions from '../screens/coach/dashboard/QuickActions';
-
+import SessionScheduleScreen from '../screens/coach/training/SessionScheduleScreen';
 // Training & Session Management Screens
 import TrainingPlanLibrary from '../screens/coach/training/TrainingPlanLibrary';
 import SessionTemplates from '../screens/coach/training/SessionTemplates';
@@ -660,6 +660,14 @@ const DashboardStack = () => (
       options={{ title: 'Create Training Plan' }} 
     />
     <Stack.Screen 
+      name="SessionScheduleScreen" 
+      component={SessionScheduleScreen}
+      options={{ 
+        title: 'Session Details',
+        headerShown: false // Since the component has its own header
+      }} 
+    />
+    <Stack.Screen 
       name="CoachingPlanUploadScreen" 
       component={CoachingPlanUploadScreen} 
       options={{ title: 'Upload Coaching Plan' }} 
@@ -804,6 +812,14 @@ const TrainingStack = () => (
       name="CreateTrainingPlan" 
       component={CreateTrainingPlan} 
       options={{ title: 'Create Training Plan' }} 
+    />
+    <Stack.Screen 
+      name="SessionScheduleScreen" 
+      component={SessionScheduleScreen}
+      options={{ 
+        title: 'Session Details',
+        headerShown: false // Since the component has its own header
+      }} 
     />
     <Stack.Screen 
       name="CoachingPlanUploadScreen" 

@@ -555,11 +555,11 @@ async checkPhoneUsageCount(phone) {
       const unsynced = registeredUsers.filter(user => !user.syncedToServer);
       
       if (unsynced.length === 0) {
-        console.log('📱 No offline registrations to sync');
+        //console.log('📱 No offline registrations to sync');
         return { success: true, syncedCount: 0 };
       }
       
-      console.log(`🔄 Found ${unsynced.length} offline registrations to sync`);
+     // console.log(`🔄 Found ${unsynced.length} offline registrations to sync`);
       
       let syncedCount = 0;
       const updatedUsers = [...registeredUsers];
