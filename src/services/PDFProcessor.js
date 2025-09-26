@@ -143,84 +143,121 @@ class PDFProcessor {
     }
   }
 
-  async _extractTextFromPDFWeb(document) {
-    try {
-      if (!this.pdfLibrary || !this.pdfLibrary.getDocument) {
-        throw PlatformUtils.createError(
-          'PDF.js library not properly initialized',
-          ['Refresh the page and try again', 'Check internet connection']
-        );
-      }
-
-      // Get PDF data buffer
-      let pdfBuffer;
-      
-      // First try to get from stored document
-      const documents = await this._getStoredDocuments();
-      const storedDoc = documents.find(doc => doc.id === document.id);
-      
-      if (storedDoc && storedDoc.webFileData) {
-        pdfBuffer = new Uint8Array(storedDoc.webFileData);
-      } else if (document.file) {
-        pdfBuffer = await document.file.arrayBuffer();
-        pdfBuffer = new Uint8Array(pdfBuffer);
-      } else {
-        throw PlatformUtils.createError(
-          'PDF data not accessible',
-          ['Try re-uploading the PDF file', 'Process the file immediately after upload']
-        );
-      }
-
-      // Load PDF document
-      const pdf = await this.pdfLibrary.getDocument({ data: pdfBuffer }).promise;
-      let fullText = '';
-
-      PlatformUtils.logDebugInfo('PDF loaded successfully', {
-        numPages: pdf.numPages
-      });
-
-      // Extract text from each page
-      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        try {
-          const page = await pdf.getPage(pageNum);
-          const textContent = await page.getTextContent();
-          
-          const pageText = textContent.items
-            .map(item => item.str)
-            .join(' ')
-            .trim();
-          
-          if (pageText) {
-            fullText += `\n--- Page ${pageNum} ---\n${pageText}\n`;
-          }
-        } catch (pageError) {
-          console.warn(`Failed to extract text from page ${pageNum}:`, pageError);
-          fullText += `\n--- Page ${pageNum} ---\n[Text extraction failed for this page]\n`;
-        }
-      }
-
-      if (fullText.trim().length === 0) {
-        throw PlatformUtils.createError(
-          'No text content found in PDF',
-          [
-            'PDF may be image-based (scanned document)',
-            'Try using OCR software to convert to text',
-            'Convert PDF to Word format for text extraction'
-          ]
-        );
-      }
-
-      PlatformUtils.logDebugInfo('PDF text extraction completed', {
-        pages: pdf.numPages,
-        textLength: fullText.length
-      });
-
-      return fullText.trim();
-    } catch (error) {
-      console.error('Web PDF text extraction error:', error);
-      throw error;
+async _extractTextFromPDFWeb(document) {
+  try {
+    if (!this.pdfLibrary || !this.pdfLibrary.getDocument) {
+      throw PlatformUtils.createError(
+        'PDF.js library not properly initialized',
+        ['Refresh the page and try again', 'Check internet connection']
+      );
     }
+
+    // Get PDF data buffer
+    let pdfBuffer;
+    
+    const documents = await this._getStoredDocuments();
+    const storedDoc = documents.find(doc => doc.id === document.id);
+    
+    if (storedDoc && storedDoc.webFileData) {
+      pdfBuffer = new Uint8Array(storedDoc.webFileData);
+    } else if (document.file) {
+      pdfBuffer = await document.file.arrayBuffer();
+      pdfBuffer = new Uint8Array(pdfBuffer);
+    } else {
+      throw PlatformUtils.createError(
+        'PDF data not accessible',
+        ['Try re-uploading the PDF file', 'Process the file immediately after upload']
+      );
+    }
+
+    // Load PDF document with better error handling
+    const loadingTask = this.pdfLibrary.getDocument({ 
+      data: pdfBuffer,
+      maxImageSize: -1, // No limit on image size
+      disableFontFace: false,
+      useWorkerFetch: false,
+      verbosity: 0 // Reduce console noise
+    });
+    
+    const pdf = await loadingTask.promise;
+    let fullText = '';
+
+    PlatformUtils.logDebugInfo('PDF loaded successfully', {
+      numPages: pdf.numPages
+    });
+
+    // Extract text from each page with better text reconstruction
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      try {
+        const page = await pdf.getPage(pageNum);
+        const textContent = await page.getTextContent({
+          normalizeWhitespace: false,
+          disableCombineTextItems: false
+        });
+        
+        // Improved text reconstruction that preserves formatting
+        let pageText = '';
+        let lastY = null;
+        let currentLine = '';
+        
+        for (const item of textContent.items) {
+          if (item.str.trim() === '') continue;
+          
+          // Detect line breaks based on Y position
+          if (lastY !== null && Math.abs(item.transform[5] - lastY) > 5) {
+            if (currentLine.trim()) {
+              pageText += currentLine.trim() + '\n';
+              currentLine = '';
+            }
+          }
+          
+          currentLine += item.str + ' ';
+          lastY = item.transform[5];
+        }
+        
+        // Add the last line
+        if (currentLine.trim()) {
+          pageText += currentLine.trim() + '\n';
+        }
+        
+        if (pageText.trim()) {
+          fullText += `${pageText}\n`;
+        }
+        
+        PlatformUtils.logDebugInfo(`Page ${pageNum} extracted`, {
+          textLength: pageText.length,
+          hasContent: pageText.trim().length > 0
+        });
+        
+      } catch (pageError) {
+        console.warn(`Failed to extract text from page ${pageNum}:`, pageError);
+        // Continue with other pages instead of failing completely
+      }
+    }
+
+    if (fullText.trim().length === 0) {
+      throw PlatformUtils.createError(
+        'No text content found in PDF',
+        [
+          'PDF may be image-based (scanned document)',
+          'Try using OCR software to convert to text',
+          'Convert PDF to Word format for text extraction'
+        ]
+      );
+    }
+
+    PlatformUtils.logDebugInfo('PDF text extraction completed', {
+      pages: pdf.numPages,
+      textLength: fullText.length,
+      preview: fullText.substring(0, 200)
+    });
+
+    return fullText.trim();
+  } catch (error) {
+    console.error('Web PDF text extraction error:', error);
+    throw error;
   }
+}
 
   async _extractTextFromPDFMobile(document) {
     try {

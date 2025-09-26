@@ -592,7 +592,16 @@ const handleStartSession = (session) => {
   );
 };
 
+const showOptimizedSchedule = () => {
+  const schedule = extractedSessions[0]?.optimizedSchedule;
+  if (!schedule) return;
 
+  navigation.navigate('AIScheduleView', {
+    schedule: schedule,
+    planTitle: plan.title,
+    planId: plan.id
+  });
+};
 
 // Move this function to component level (around line 300)
 const loadSessionsFromDocument = async () => {
@@ -627,6 +636,84 @@ const processDocumentAsPlan = (document) => {
       });
     }
   });
+};
+
+const handleGenerateVariations = async () => {
+  try {
+    Alert.alert(
+      'Generate Variations',
+      'Create training plans for other sports based on this plan?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Generate',
+          onPress: async () => {
+            setSnackbarMessage('Generating AI variations...');
+            setSnackbarVisible(true);
+            
+            const variations = await DocumentProcessor.generateSportVariations(
+              plan.id,
+              ['basketball', 'tennis', 'volleyball']
+            );
+            
+            setSnackbarMessage(`Generated ${variations.length} sport variations!`);
+            setSnackbarVisible(true);
+          }
+        }
+      ]
+    );
+  } catch (error) {
+    Alert.alert('Generation Failed', error.message);
+  }
+};
+
+const showAIInsights = () => {
+  if (!plan.aiInsights || !plan.aiSuggestedImprovements) {
+    Alert.alert('AI Analysis', 'No AI insights available for this plan.');
+    return;
+  }
+
+  const insightsText = [
+    '🧠 AI Analysis Results:',
+    '',
+    ...plan.aiInsights.map(insight => `• ${insight}`),
+    '',
+    '💡 Suggested Improvements:',
+    '',
+    ...plan.aiSuggestedImprovements.map(suggestion => `• ${suggestion}`)
+  ].join('\n');
+
+  Alert.alert(
+    'AI Training Plan Analysis',
+    insightsText,
+    [
+      { text: 'Apply Suggestions', onPress: () => applyAISuggestions() },
+      { text: 'Close' }
+    ]
+  );
+};
+
+const applyAISuggestions = () => {
+  Alert.alert(
+    'Apply AI Suggestions',
+    'This will create an enhanced version of your training plan with AI recommendations applied.',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Create Enhanced Plan',
+        onPress: async () => {
+          setSnackbarMessage('Creating AI-enhanced plan...');
+          setSnackbarVisible(true);
+          
+          // Here you would call your AI enhancement logic
+          setTimeout(() => {
+            setSnackbarMessage('Enhanced plan created successfully!');
+            setSnackbarVisible(true);
+          }, 2000);
+        }
+      }
+    ]
+  );
 };
 
 const shareDocument = async (document) => {
@@ -799,6 +886,47 @@ const fabConfigs = {
         </View>
       </Surface>
 
+      {/* AI Enhancement Status - Add this after statsCard */}
+        {plan.aiAnalyzed && (
+          <Surface style={styles.aiStatusCard}>
+            <View style={styles.aiStatusHeader}>
+              <Icon name="auto-awesome" size={24} color="#9C27B0" />
+              <Text style={[TEXT_STYLES.subtitle1, { marginLeft: SPACING.sm, color: "#9C27B0" }]}>
+                AI Enhanced Plan
+              </Text>
+              <Chip
+                mode="flat"
+                compact
+                style={{ backgroundColor: "#9C27B0", marginLeft: 'auto' }}
+                textStyle={{ color: 'white', fontSize: 10 }}
+              >
+                {Math.round((plan.aiConfidence || 0.7) * 100)}% Confidence
+              </Chip>
+            </View>
+            
+            {plan.aiInsights && plan.aiInsights.length > 0 && (
+              <View style={styles.aiInsights}>
+                {plan.aiInsights.slice(0, 3).map((insight, index) => (
+                  <Text key={index} style={[TEXT_STYLES.body2, { color: COLORS.textSecondary, marginBottom: 4 }]}>
+                    • {insight}
+                  </Text>
+                ))}
+              </View>
+            )}
+            
+            <Button
+              mode="outlined"
+              compact
+              onPress={() => showAIInsights()}
+              style={{ marginTop: SPACING.sm, borderColor: "#9C27B0" }}
+              textColor="#9C27B0"
+              icon="lightbulb"
+            >
+              View AI Suggestions
+            </Button>
+          </Surface>
+        )}
+
       {/* Description */}
       <Card style={styles.sectionCard}>
         <Card.Content>
@@ -808,6 +936,26 @@ const fabConfigs = {
           <Text style={[TEXT_STYLES.body1, { lineHeight: 24 }]}>
             {plan.description}
           </Text>
+        </Card.Content>
+      </Card>
+
+      {/* AI Generation Section */}
+      <Card style={styles.sectionCard}>
+        <Card.Content>
+          <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.md }]}>
+            AI-Powered Features
+          </Text>
+          <Text style={[TEXT_STYLES.body2, { marginBottom: SPACING.md, color: COLORS.textSecondary }]}>
+            Generate variations of this training plan for different sports
+          </Text>
+          <Button
+            mode="contained"
+            onPress={() => handleGenerateVariations()}
+            style={{ backgroundColor: COLORS.secondary }}
+            icon="auto-awesome"
+          >
+            Generate Sport Variations
+          </Button>
         </Card.Content>
       </Card>
 
@@ -1124,6 +1272,46 @@ const fabConfigs = {
 
 
 const renderSessions = () => {
+
+  {extractedSessions.length > 0 && extractedSessions[0]?.optimizedSchedule && (
+    <Card style={styles.aiScheduleCard}>
+      <Card.Content>
+        <View style={styles.aiScheduleHeader}>
+          <Icon name="schedule" size={24} color="#2196F3" />
+          <Text style={[TEXT_STYLES.subtitle1, { marginLeft: SPACING.sm, fontWeight: 'bold' }]}>
+            AI-Optimized Schedule
+          </Text>
+        </View>
+        
+        <Text style={[TEXT_STYLES.body2, { color: COLORS.textSecondary, marginVertical: SPACING.sm }]}>
+          Smart scheduling based on progressive training principles
+        </Text>
+        
+        <View style={styles.schedulePreview}>
+          {extractedSessions[0].optimizedSchedule.sessions.slice(0, 3).map((session, index) => (
+            <View key={session.id} style={styles.scheduleItem}>
+              <Text style={[TEXT_STYLES.caption, { fontWeight: 'bold' }]}>
+                {session.day} • {session.time}
+              </Text>
+              <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
+                {session.type} - {session.duration}min
+              </Text>
+            </View>
+          ))}
+        </View>
+        
+        <Button
+          mode="contained"
+          compact
+          onPress={() => showOptimizedSchedule()}
+          style={{ backgroundColor: "#2196F3", marginTop: SPACING.sm }}
+          icon="calendar-today"
+        >
+          View Full AI Schedule
+        </Button>
+      </Card.Content>
+    </Card>
+  )}
 
   if (loadingSessions) {
     return (
@@ -2136,6 +2324,44 @@ sessionActions: {
 sessionsHeader: {
   marginBottom: SPACING.md,
   paddingHorizontal: SPACING.sm,
+},
+aiStatusCard: {
+  marginBottom: SPACING.md,
+  padding: SPACING.md,
+  elevation: 2,
+  borderRadius: 12,
+  backgroundColor: '#F3E5F5',
+},
+aiStatusHeader: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  marginBottom: SPACING.sm,
+},
+aiInsights: {
+  marginVertical: SPACING.sm,
+},
+aiScheduleCard: {
+  marginBottom: SPACING.md,
+  borderLeftWidth: 4,
+  borderLeftColor: '#2196F3',
+  elevation: 2,
+},
+aiScheduleHeader: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  marginBottom: SPACING.sm,
+},
+schedulePreview: {
+  flexDirection: 'row',
+  justifyContent: 'space-around',
+  marginVertical: SPACING.sm,
+},
+scheduleItem: {
+  alignItems: 'center',
+  padding: SPACING.xs,
+  backgroundColor: 'rgba(33, 150, 243, 0.1)',
+  borderRadius: 8,
+  minWidth: 80,
 },
 };
 

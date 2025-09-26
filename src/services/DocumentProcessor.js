@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import PlatformUtils from '../utils/PlatformUtils';
 import PDFProcessor from './PDFProcessor';
+import AIService from './AIService';
 
 // Safe module variables - initialized to null
 let DocumentPicker = null;
@@ -167,6 +168,84 @@ async selectDocument() {
     const platformError = PlatformUtils.handlePlatformError(error, 'Document Selection');
     console.error('Document selection error:', platformError);
     throw platformError;
+  }
+}
+
+// Add this method to your DocumentProcessor class
+
+async processTrainingPlan(documentId, options = {}) {
+  try {
+    await this.ensureInitialized();
+    
+    console.log('Processing training plan for document:', documentId);
+    
+    // Get the document from storage
+    const documents = await this.getStoredDocuments();
+    const document = documents.find(doc => doc.id === documentId);
+    
+    if (!document) {
+      throw PlatformUtils.createError('Document not found', [
+        'The document may have been deleted',
+        'Try uploading the document again'
+      ]);
+    }
+    
+    // Check if document was already processed (unless force reprocess is enabled)
+    if (document.processed && !options.force) {
+      console.log('Document already processed, checking for existing plan...');
+      
+      // Look for existing training plan
+      const existingPlans = await this.getTrainingPlans();
+      const existingPlan = existingPlans.find(plan => plan.sourceDocument === documentId);
+      
+      if (existingPlan) {
+        console.log('Found existing training plan:', existingPlan.id);
+        return existingPlan;
+      }
+    }
+    
+    // Process the document to extract text
+    console.log('Extracting text from document...');
+    const extractionResult = await this.extractDocumentText(document);
+    const text = extractionResult.text;
+    
+    if (!text || text.trim().length < 50) {
+      throw PlatformUtils.createError('Insufficient content in document', [
+        'Document appears to be empty or very short',
+        'Ensure the document contains training plan information'
+      ]);
+    }
+    
+    // Use AI-enhanced analysis to create training plan
+    console.log('Analyzing document with AI enhancement...');
+    const trainingPlan = await this.analyzeDocumentWithAI(text, document, options);
+    
+    // Save the training plan
+    console.log('Saving training plan...');
+    const savedPlan = await this.saveTrainingPlan(trainingPlan);
+    
+    // Mark document as processed
+    document.processed = true;
+    document.processedAt = new Date().toISOString();
+    document.aiProcessed = true;
+    await this.updateDocumentMetadata(document);
+    
+    console.log('Training plan processing completed successfully');
+    
+    // Add processing stats to the plan (optional enhancement)
+    savedPlan.processingStats = {
+      textLength: text.length,
+      aiAnalyzed: trainingPlan.aiAnalyzed,
+      confidence: trainingPlan.aiConfidence,
+      extractionMethod: 'ai_enhanced',
+      processedAt: new Date().toISOString()
+    };
+    
+    return savedPlan;
+    
+  } catch (error) {
+    console.error('Training plan processing failed:', error);
+    throw PlatformUtils.handlePlatformError(error, 'Training Plan Processing');
   }
 }
 
@@ -598,135 +677,41 @@ async _storeDocumentWeb(file) {
   }
 
   // Process training plan with enhanced error handling
-async processTrainingPlan(documentId) {
+async generateSportVariations(originalPlanId, targetSports = ['basketball', 'tennis', 'volleyball']) {
   try {
-    await this.ensureInitialized();
+    const plans = await this.getTrainingPlans();
+    const originalPlan = plans.find(plan => plan.id === originalPlanId);
     
-    // Check if a training plan already exists for this document
-    const existingPlans = await this.getTrainingPlans();
-    const existingPlan = existingPlans.find(plan => plan.sourceDocument === documentId);
-    
-    if (existingPlan) {
-      console.log('Training plan already exists for document:', documentId);
-      return existingPlan; // Return existing plan instead of creating new one
-    }
-    
-    const documents = await this.getStoredDocuments();
-    const document = documents.find(doc => doc.id === documentId);
-    
-    if (!document) {
-      throw PlatformUtils.createError('Document not found in storage');
+    if (!originalPlan) {
+      throw PlatformUtils.createError('Original plan not found');
     }
 
-    // Validate that we have file data before proceeding
-    if (PlatformUtils.isWeb()) {
-      if (!document.webFileData || !Array.isArray(document.webFileData) || document.webFileData.length === 0) {
-        throw PlatformUtils.createError(
-          'File data is missing or corrupted',
-          [
-            'Try uploading the file again',
-            'Process the file immediately after upload',
-            'Check if the browser cleared the data'
-          ]
-        );
-      }
-      console.log('Document has web file data, size:', document.webFileData.length);
-    } else {
-      if (!document.localPath) {
-        throw PlatformUtils.createError(
-          'Local file path is missing',
-          ['Try uploading the file again', 'Check app permissions']
-        );
-      }
+    const generatedPlans = [];
+    
+    for (const sport of targetSports) {
+      const variation = await AIService.generatePlanVariations(originalPlan, sport);
+      variation.id = `plan_${Date.now()}_${sport}_${Math.random().toString(36).substr(2, 9)}`;
+      variation.createdAt = new Date().toISOString();
+      variation.isAIGenerated = true;
+      variation.originalPlanId = originalPlanId;
       
-      // Verify file still exists on mobile
-      if (RNFS) {
-        const exists = await RNFS.exists(document.localPath);
-        if (!exists) {
-          throw PlatformUtils.createError(
-            'File no longer exists on device',
-            ['Try uploading the file again', 'Check device storage']
-          );
-        }
-      }
+      generatedPlans.push(variation);
     }
 
-    PlatformUtils.logDebugInfo('Processing training plan', { 
-      documentId, 
-      type: document.type,
-      platform: document.platform,
-      hasWebData: !!document.webFileData,
-      hasLocalPath: !!document.localPath
-    });
-    
-    // Extract text content using unified approach
-    console.log('Starting unified text extraction for document:', document.id);
-
-    const extractionResult = await this.extractDocumentText(document);
-    const extractedText = extractionResult.text;
-    const documentFormat = extractionResult.format;
-    const documentMetadata = extractionResult.metadata;
-
-    console.log(`Text extracted from ${documentFormat} document:`, {
-      length: extractedText.length,
-      format: documentFormat,
-      hasMetadata: !!documentMetadata,
-      processingMethod: documentMetadata.processingMethod
-    });
-
-    if (!extractedText || extractedText.trim().length === 0) {
-      throw PlatformUtils.createError(
-        'No readable text found in the document',
-        [
-          'Check if the document contains text content',
-          'Try opening the file in its native application first',
-          'Ensure the file is not password protected'
-        ]
-      );
+    // Save all generated plans
+    for (const plan of generatedPlans) {
+      await this.saveTrainingPlan(plan);
     }
 
-    console.log('Text extracted successfully, length:', extractedText.length);
+    PlatformUtils.logDebugInfo('AI sport variations generated', {
+      originalSport: originalPlan.sport,
+      generatedSports: targetSports,
+      planCount: generatedPlans.length
+    });
 
-    // Process extracted text into training plan structure
-    const trainingPlan = await this.parseTrainingPlanContent(extractedText, document);
-    
-    // Save processed training plan
-    await this.saveTrainingPlan(trainingPlan);
-    
-    // Mark document as processed
-// Mark document as processed
-document.processed = true;
-document.processedAt = new Date().toISOString();
-document.linkedTrainingPlanId = trainingPlan.id;
-await this.updateDocumentMetadata(document);
-
-// Auto-extract sessions from the training plan
-try {
-  const sessionExtractionResult = await this.extractAndStoreSessionsFromPlan(trainingPlan);
-  
-  PlatformUtils.logDebugInfo('Training plan and sessions processed successfully', { 
-    planId: trainingPlan.id,
-    sessionsCount: trainingPlan.sessionsCount,
-    extractedSessions: sessionExtractionResult.totalSessions,
-    textLength: extractedText.length
-  });
-} catch (sessionError) {
-  console.warn('Session extraction failed, but plan was created:', sessionError.message);
-}
-
-//return trainingPlan;
-
-  {doc.linkedTrainingPlanId && (
-  <View style={styles.processedIndicator}>
-    <Icon name="check-circle" size={16} color="#4CAF50" />
-    <Text style={styles.processedText}>Processed</Text>
-  </View>
-)}
-
-  return trainingPlan;
+    return generatedPlans;
   } catch (error) {
-    console.error('Error processing training plan:', error);
-    throw PlatformUtils.handlePlatformError(error, 'Training Plan Processing');
+    throw PlatformUtils.handlePlatformError(error, 'AI Plan Generation');
   }
 }
 
@@ -1509,7 +1494,7 @@ async extractPDFTextUnified(document) {
       ]);
     }
     
-    const text = await pdfProcessor.extractTextFromPDF(document);
+    let text = await pdfProcessor.extractTextFromPDF(document);
     
     if (!text || text.trim().length === 0) {
       return this.generateFormatFallback('PDF', document, [
@@ -1518,6 +1503,9 @@ async extractPDFTextUnified(document) {
         'Convert to Word format'
       ]);
     }
+
+    // Enhanced text cleaning for better session extraction
+    text = this.cleanPDFText(text);
     
     return `PDF Document: ${document.originalName}\n${'='.repeat(50)}\n\n${text}`;
   } catch (error) {
@@ -1528,6 +1516,35 @@ async extractPDFTextUnified(document) {
       'Ensure PDF contains selectable text (not scanned images)'
     ]);
   }
+}
+
+// Add this helper method to DocumentProcessor:
+
+cleanPDFText(text) {
+  return text
+    // Normalize line endings
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    
+    // Fix common PDF extraction issues
+    .replace(/([a-z])([A-Z])/g, '$1 $2') // Add spaces between lowercase and uppercase
+    .replace(/(\d)([A-Z])/g, '$1 $2')    // Add spaces between numbers and uppercase
+    
+    // Normalize week headers
+    .replace(/Week\s*(\d+)/gi, 'Week $1')
+    .replace(/WEEK\s*(\d+)/gi, 'Week $1')
+    
+    // Clean up excessive whitespace but preserve paragraph breaks
+    .replace(/[ \t]+/g, ' ')  // Multiple spaces/tabs to single space
+    .replace(/\n\s+/g, '\n')  // Remove leading whitespace on lines
+    .replace(/\s+\n/g, '\n')  // Remove trailing whitespace on lines
+    .replace(/\n{3,}/g, '\n\n') // Max 2 consecutive newlines
+    
+    // Ensure proper spacing around important keywords
+    .replace(/(Technical Competency Focus|Tactical Competency Focus|Daily Session Structure)/gi, '\n\n$1')
+    .replace(/(Warm-Up|Technical Drills|Conditioning Games|Cool-down)/gi, '\n$1')
+    
+    .trim();
 }
 
   // Keep all your existing parsing methods unchanged but add error handling
@@ -1602,6 +1619,261 @@ async parseTrainingPlanContent(text, document, options = {}) {
   }
 }
 
+// AI-Enhanced document analysis
+async analyzeDocumentWithAI(text, document, options = {}) {
+  try {
+    console.log('DocumentProcessor: Starting AI-enhanced document analysis');
+    
+    // First, do basic extraction
+    const basicPlan = await this.parseTrainingPlanContent(text, document, options);
+    
+    // Then enhance with AI if available
+    const aiAnalysis = await this.performAIDocumentAnalysis(text);
+    
+    // Merge AI insights with basic plan
+    const enhancedPlan = {
+      ...basicPlan,
+      aiAnalyzed: true,
+      aiInsights: aiAnalysis.insights,
+      aiConfidence: aiAnalysis.confidence,
+      aiSuggestedImprovements: aiAnalysis.suggestions,
+      aiExtractedMetadata: aiAnalysis.metadata
+    };
+    
+    console.log('DocumentProcessor: AI-enhanced analysis complete');
+    return enhancedPlan;
+    
+  } catch (error) {
+    console.warn('DocumentProcessor: AI analysis failed, using basic parsing:', error);
+    // Fallback to basic parsing if AI fails
+    return await this.parseTrainingPlanContent(text, document, options);
+  }
+}
+
+async performAIDocumentAnalysis(text) {
+  try {
+    // Analyze document structure and content
+    const analysis = {
+      insights: [],
+      confidence: 0,
+      suggestions: [],
+      metadata: {}
+    };
+    
+    // Use AI to identify key sections
+    const sections = await this.identifyDocumentSections(text);
+    analysis.metadata.sections = sections;
+    
+    // Extract training-specific information
+    const trainingInfo = await this.extractTrainingInformation(text);
+    analysis.insights = trainingInfo.insights;
+    analysis.confidence = trainingInfo.confidence;
+    
+    // Generate improvement suggestions
+    analysis.suggestions = await this.generateImprovementSuggestions(text, trainingInfo);
+    
+    return analysis;
+    
+  } catch (error) {
+    console.error('AI document analysis failed:', error);
+    return {
+      insights: ['AI analysis unavailable - using rule-based extraction'],
+      confidence: 0.5,
+      suggestions: [],
+      metadata: { aiError: error.message }
+    };
+  }
+}
+
+async identifyDocumentSections(text) {
+  // Rule-based section identification with AI enhancement potential
+  const sections = {
+    title: null,
+    overview: null,
+    weeks: [],
+    sessions: [],
+    equipment: [],
+    notes: []
+  };
+  
+  const lines = text.split('\n').filter(line => line.trim().length > 0);
+  
+  // Enhanced pattern recognition
+  const weekPattern = /^(week\s*\d+|training\s*week\s*\d+|phase\s*\d+)/i;
+  const sessionPattern = /(session\s*\d+|day\s*\d+|training\s*day)/i;
+  const equipmentPattern = /(equipment|materials|required|needed):/i;
+  
+  let currentSection = 'overview';
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    if (weekPattern.test(line)) {
+      currentSection = 'weeks';
+      sections.weeks.push({
+        lineNumber: i,
+        title: line,
+        content: []
+      });
+    } else if (sessionPattern.test(line)) {
+      currentSection = 'sessions';
+      sections.sessions.push({
+        lineNumber: i,
+        title: line,
+        content: []
+      });
+    } else if (equipmentPattern.test(line)) {
+      currentSection = 'equipment';
+      sections.equipment.push(line);
+    } else {
+      // Add content to current section
+      if (currentSection === 'overview' && !sections.overview) {
+        sections.overview = line;
+      } else if (currentSection === 'weeks' && sections.weeks.length > 0) {
+        sections.weeks[sections.weeks.length - 1].content.push(line);
+      } else if (currentSection === 'sessions' && sections.sessions.length > 0) {
+        sections.sessions[sections.sessions.length - 1].content.push(line);
+      }
+    }
+  }
+  
+  return sections;
+}
+
+async extractTrainingInformation(text) {
+  try {
+    const info = {
+      insights: [],
+      confidence: 0.7 // Default confidence for rule-based extraction
+    };
+    
+    // Analyze training structure
+    const lines = text.split('\n').filter(line => line.trim().length > 0);
+    const totalLines = lines.length;
+    
+    // Check for structured training content
+    const weekCount = (text.match(/week\s*\d+/gi) || []).length;
+    const sessionCount = (text.match(/session\s*\d+|day\s*\d+/gi) || []).length;
+    const exerciseCount = (text.match(/exercise|drill|workout|training/gi) || []).length;
+    
+    if (weekCount >= 4) {
+      info.insights.push(`Structured ${weekCount}-week training program detected`);
+      info.confidence += 0.1;
+    }
+    
+    if (sessionCount >= 10) {
+      info.insights.push(`${sessionCount} training sessions identified`);
+      info.confidence += 0.1;
+    }
+    
+    if (exerciseCount >= 20) {
+      info.insights.push(`Exercise-rich content with ${exerciseCount} training references`);
+      info.confidence += 0.1;
+    }
+    
+    // Check for training terminology
+    const trainingTerms = ['warm-up', 'cool-down', 'conditioning', 'strength', 'cardio', 'flexibility'];
+    const foundTerms = trainingTerms.filter(term => 
+      text.toLowerCase().includes(term.toLowerCase())
+    );
+    
+    if (foundTerms.length >= 3) {
+      info.insights.push(`Professional training terminology found: ${foundTerms.join(', ')}`);
+      info.confidence += 0.1;
+    }
+    
+    // Check document completeness
+    if (totalLines > 100) {
+      info.insights.push('Comprehensive document with detailed content');
+    } else if (totalLines < 30) {
+      info.insights.push('Brief document - may need additional details');
+      info.confidence -= 0.1;
+    }
+    
+    // Ensure minimum insights
+    if (info.insights.length === 0) {
+      info.insights.push('Basic training document structure detected');
+    }
+    
+    // Cap confidence between 0.3 and 1.0
+    info.confidence = Math.max(0.3, Math.min(1.0, info.confidence));
+    
+    return info;
+    
+  } catch (error) {
+    console.error('Training information extraction failed:', error);
+    return {
+      insights: ['AI analysis unavailable - using basic extraction'],
+      confidence: 0.5
+    };
+  }
+}
+
+async generateImprovementSuggestions(text, trainingInfo) {
+  try {
+    const suggestions = [];
+    const lines = text.split('\n').filter(line => line.trim().length > 0);
+    
+    // Check document structure
+    const weekCount = (text.match(/week\s*\d+/gi) || []).length;
+    const sessionCount = (text.match(/session\s*\d+|day\s*\d+/gi) || []).length;
+    
+    if (weekCount < 4) {
+      suggestions.push('Consider extending to at least 4 weeks for better progression tracking');
+    }
+    
+    if (sessionCount === 0) {
+      suggestions.push('Add specific session structures with daily breakdowns');
+    }
+    
+    // Check for missing components
+    if (!text.toLowerCase().includes('warm-up') && !text.toLowerCase().includes('warm up')) {
+      suggestions.push('Include warm-up routines for injury prevention');
+    }
+    
+    if (!text.toLowerCase().includes('cool-down') && !text.toLowerCase().includes('cool down')) {
+      suggestions.push('Add cool-down activities for proper recovery');
+    }
+    
+    // Check for progression indicators
+    if (!text.toLowerCase().includes('progress') && !text.toLowerCase().includes('advance')) {
+      suggestions.push('Define progression metrics and advancement criteria');
+    }
+    
+    // Check for equipment mentions
+    if (!text.toLowerCase().includes('equipment') && !text.toLowerCase().includes('materials')) {
+      suggestions.push('List required equipment and materials for each session');
+    }
+    
+    // Check for safety considerations
+    if (!text.toLowerCase().includes('safety') && !text.toLowerCase().includes('injury')) {
+      suggestions.push('Include safety guidelines and injury prevention tips');
+    }
+    
+    // Performance tracking suggestions
+    if (!text.toLowerCase().includes('track') && !text.toLowerCase().includes('measure')) {
+      suggestions.push('Add performance tracking and measurement guidelines');
+    }
+    
+    // Age group considerations
+    const hasAgeGroup = /\b(\d+[-–]\d+\s*years?|under\s*\d+|u\d+|\d+\s*years?|youth|adult)\b/i.test(text);
+    if (!hasAgeGroup) {
+      suggestions.push('Specify target age groups for better program customization');
+    }
+    
+    // Ensure we have some suggestions
+    if (suggestions.length === 0) {
+      suggestions.push('Document structure looks good - consider adding more detailed session breakdowns');
+    }
+    
+    return suggestions.slice(0, 5); // Limit to 5 suggestions
+    
+  } catch (error) {
+    console.error('Suggestion generation failed:', error);
+    return ['Consider reviewing document structure and adding more detailed training information'];
+  }
+}
+
   // Document validation specific to platform
 validateFileForPlatform(file) {
   const errors = [];
@@ -1639,6 +1911,8 @@ validateFileForPlatform(file) {
     ] : []
   };
 }
+
+
 
 // ADD this entirely new method
 async readDocumentData(document) {

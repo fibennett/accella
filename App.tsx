@@ -14,6 +14,9 @@ import { initializeGoogleSignIn } from './src/store/actions/registrationActions'
 import FirebaseService from './src/services/FirebaseService';
 import { initializeFirebaseApp, setupAutoSyncRetry } from './src/config/firebaseInit';
 
+// NEW: AI Service imports
+import AIService from './src/services/AIService';
+
 // Type for the dispatch function
 import type { AppDispatch } from './src/store/store';
 
@@ -23,6 +26,7 @@ LogBox.ignoreLogs([
   'AsyncStorage has been extracted',
   'Require cycle:',
   'Module TurboModuleRegistry',
+  'TensorFlow.js', // Add this to ignore TF warnings
 ]);
 
 interface AppInitializerProps {
@@ -42,6 +46,15 @@ const AppInitializer: React.FC<AppInitializerProps> = ({ children }) => {
           console.log('Network monitoring initialized successfully');
         } else if (initializeNetworkMonitoring.rejected.match(networkResult)) {
           console.warn('Network monitoring initialization failed:', networkResult.payload);
+        }
+        
+        // NEW: Initialize AI Service
+        console.log('Initializing AI services...');
+        try {
+          await AIService.initialize();
+          console.log('AI services initialized successfully');
+        } catch (aiError) {
+          console.warn('AI service initialization failed, continuing without AI features:', aiError);
         }
         
         // Initialize Firebase service
@@ -84,13 +97,11 @@ const AppInitializer: React.FC<AppInitializerProps> = ({ children }) => {
   return <>{children}</>;
 };
 
-// New authentication bridge initialization function
+// Authentication bridge initialization function (unchanged)
 const initializeAuthBridge = async (): Promise<void> => {
   try {
-    // Wait for services to be ready
     await new Promise(resolve => setTimeout(resolve, 2000));
     
-    // Import services dynamically to avoid import cycles
     const AuthService = require('./src/services/AuthService').default;
     const ChatService = require('./src/services/ChatService').default;
     
@@ -99,11 +110,9 @@ const initializeAuthBridge = async (): Promise<void> => {
       return;
     }
     
-    // Bridge local authentication to Firebase for messaging
     console.log('🔄 Starting authentication bridge...');
     
     try {
-      // Check if bridgeLocalToFirebase method exists
       if (typeof AuthService.bridgeLocalToFirebase === 'function') {
         const bridgeResult = await AuthService.bridgeLocalToFirebase();
         
@@ -116,7 +125,6 @@ const initializeAuthBridge = async (): Promise<void> => {
             console.log('☁️ Connected to Firebase for messaging');
           }
           
-          // Initialize ChatService after auth bridge
           if (typeof ChatService.initializeService === 'function') {
             const chatInitResult = await ChatService.initializeService();
             console.log('💬 Chat service initialization result:', chatInitResult.success ? 'Success' : 'Failed');
@@ -125,7 +133,6 @@ const initializeAuthBridge = async (): Promise<void> => {
         } else {
           console.log('⚠️ Authentication bridge failed:', bridgeResult.reason);
           
-          // Try fallback messaging initialization
           if (typeof ChatService.enableMessagingFallback === 'function') {
             console.log('🔧 Trying messaging fallback...');
             const fallbackResult = await ChatService.enableMessagingFallback();
@@ -137,7 +144,6 @@ const initializeAuthBridge = async (): Promise<void> => {
       } else {
         console.log('⚠️ Authentication bridge method not available, using basic init');
         
-        // Fallback initialization
         if (typeof ChatService.initializeService === 'function') {
           await ChatService.initializeService();
         }
@@ -146,7 +152,6 @@ const initializeAuthBridge = async (): Promise<void> => {
     } catch (bridgeError) {
       console.error('❌ Authentication bridge error:', bridgeError);
       
-      // Try to at least initialize ChatService in fallback mode
       try {
         if (typeof ChatService.enableMessagingFallback === 'function') {
           console.log('🔧 Enabling messaging fallback after bridge error...');
@@ -159,7 +164,6 @@ const initializeAuthBridge = async (): Promise<void> => {
     
   } catch (error) {
     console.error('❌ Auth bridge initialization error:', error);
-    // Don't throw - let app continue
   }
 };
 
@@ -192,6 +196,7 @@ export default function App(): React.ReactElement {
   const [isFirebaseReady, setIsFirebaseReady] = useState<boolean>(false);
   const [firebaseMode, setFirebaseMode] = useState<string>('offline');
   const [initializationError, setInitializationError] = useState<string | null>(null);
+  const [aiStatus, setAiStatus] = useState<string>('initializing');
 
   useEffect(() => {
     let retryInterval: NodeJS.Timeout | null = null;
@@ -208,7 +213,6 @@ export default function App(): React.ReactElement {
           setFirebaseMode(firebaseResult.mode);
           console.log(`Firebase initialized in ${firebaseResult.mode} mode`);
           
-          // Set up auto-retry for syncing if online
           if (firebaseResult.mode === 'online') {
             retryInterval = setupAutoSyncRetry();
           }
@@ -218,7 +222,17 @@ export default function App(): React.ReactElement {
           setInitializationError(firebaseResult?.error || 'Unknown Firebase initialization error');
         }
         
-        // Always set as ready - app works offline
+        // NEW: Initialize AI Service early
+        try {
+          console.log('Pre-initializing AI services...');
+          await AIService.initialize();
+          setAiStatus('ready');
+          console.log('AI services ready');
+        } catch (aiError) {
+          console.warn('AI services failed to initialize:', aiError);
+          setAiStatus('offline');
+        }
+        
         setIsFirebaseReady(true);
         
       } catch (error) {
@@ -226,14 +240,13 @@ export default function App(): React.ReactElement {
         const errorMessage = error instanceof Error ? error.message : 'Unknown initialization error';
         setInitializationError(errorMessage);
         setFirebaseMode('offline');
-        setIsFirebaseReady(true); // Still allow app to work offline
+        setAiStatus('offline');
+        setIsFirebaseReady(true);
       }
     };
 
-    // Add delay to ensure all modules are loaded
     const timer = setTimeout(initializeApp, 100);
 
-    // Cleanup function
     return () => {
       clearTimeout(timer);
       if (retryInterval) {
@@ -247,12 +260,11 @@ export default function App(): React.ReactElement {
     return (
       <PaperProvider theme={theme}>
         <StatusBar barStyle="default" />
-        <LoadingScreen message="Setting up Acceilla..." />
+        <LoadingScreen message="Setting up Acceilla with AI..." />
       </PaperProvider>
     );
   }
 
-  // Main app render with error boundary-like logic
   try {
     return (
       <Provider store={store}>
@@ -261,19 +273,27 @@ export default function App(): React.ReactElement {
             <NavigationContainer>
               <StatusBar barStyle="default" />
               
-              {/* Offline Sync Manager - handles automatic syncing */}
               <OfflineSyncManager />
-              
-              {/* Main App Navigator */}
               <AppNavigator />
               
-              {/* Show connection status indicator in development mode */}
-              {firebaseMode === 'offline' && __DEV__ && (
-                <View style={styles.offlineIndicator}>
-                  <Text style={styles.offlineText}>
-                    Running in offline mode
-                    {initializationError && ` (${initializationError})`}
-                  </Text>
+              {/* Enhanced status indicators */}
+              {(__DEV__ || firebaseMode === 'offline' || aiStatus !== 'ready') && (
+                <View style={styles.statusContainer}>
+                  {firebaseMode === 'offline' && (
+                    <View style={styles.offlineIndicator}>
+                      <Text style={styles.offlineText}>
+                        Running in offline mode
+                        {initializationError && ` (${initializationError})`}
+                      </Text>
+                    </View>
+                  )}
+                  {aiStatus !== 'ready' && __DEV__ && (
+                    <View style={[styles.offlineIndicator, styles.aiIndicator]}>
+                      <Text style={styles.offlineText}>
+                        AI: {aiStatus}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               )}
             </NavigationContainer>
@@ -282,7 +302,6 @@ export default function App(): React.ReactElement {
       </Provider>
     );
   } catch (error) {
-    // Fallback UI if main app fails
     console.error('Critical app error:', error);
     return (
       <View style={styles.errorContainer}>
@@ -312,15 +331,21 @@ const styles = StyleSheet.create({
     color: '#666666',
     textAlign: 'center',
   },
-  offlineIndicator: {
+  statusContainer: {
     position: 'absolute',
     top: 50,
     left: 20,
     right: 20,
+    zIndex: 1000,
+  },
+  offlineIndicator: {
     backgroundColor: 'rgba(255, 193, 7, 0.9)',
     padding: 8,
     borderRadius: 4,
-    zIndex: 1000,
+    marginBottom: 4,
+  },
+  aiIndicator: {
+    backgroundColor: 'rgba(156, 39, 176, 0.9)',
   },
   offlineText: {
     color: '#856404',
