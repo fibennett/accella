@@ -38,7 +38,6 @@ import {
 import { Slider } from '@react-native-community/slider';
 import { LinearGradient } from '../../components/shared/LinearGradient';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { WebView } from 'react-native-webview';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Design system imports
@@ -49,6 +48,22 @@ import DocumentProcessor from '../../services/DocumentProcessor';
 import PlatformUtils from '../../utils/PlatformUtils';
 import AnalyticsService from '../../services/AnalyticsService';
 import DocumentLibrary from './DocumentLibrary';
+
+// Platform-specific WebView imports
+let WebView = null;
+if (Platform.OS === 'web') {
+  // For web, we'll use iframe
+  WebView = null;
+} else {
+  try {
+    const RNWebView = require('react-native-webview');
+    WebView = RNWebView.WebView;
+  } catch (error) {
+    console.warn('react-native-webview not available');
+    WebView = null;
+  }
+}
+
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 const DocumentViewer = ({ navigation, route }) => {
@@ -103,14 +118,6 @@ if (!document && !routeParams.showAllDocuments) {
     </View>
   );
 }
-
-// If showAllDocuments is true, show document library view
-useEffect(() => {
-  if (routeParams.showAllDocuments) {
-    navigation.replace('DocumentLibrary');
-    return;
-  }
-}, [routeParams.showAllDocuments, navigation]);
   
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -130,7 +137,9 @@ useEffect(() => {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
-  
+  const [isDragging, setIsDragging] = useState(false);
+  const lastScrollPositionRef = useRef(0);
+
   // Enhanced states
   const [fontSize, setFontSize] = useState(16);
   const [darkMode, setDarkMode] = useState(false);
@@ -149,7 +158,16 @@ useEffect(() => {
   const [lastScrollPosition, setLastScrollPosition] = useState(0);
   const [readingProgress, setReadingProgress] = useState(0);
   const [estimatedReadTime, setEstimatedReadTime] = useState(0);
-  
+  // Add these new states after your existing state declarations
+  const [showScrollFab, setShowScrollFab] = useState(false);
+  const [scrollFabPosition, setScrollFabPosition] = useState({ x: 0, y: 0 });
+  const [isScrollFabDragging, setIsScrollFabDragging] = useState(false);
+  const [scrollContentHeight, setScrollContentHeight] = useState(0);
+
+  // Add these refs
+  const scrollFabRef = useRef(null);
+  const scrollIndicatorTimeoutRef = useRef(null);
+  const scrollFabAnimatedValue = useRef(new Animated.Value(0)).current;
   // Refs
   const scrollViewRef = useRef(null);
   const webViewRef = useRef(null);
@@ -266,6 +284,18 @@ useEffect(() => {
       estimatedReadTime,
     };
   }, []);
+
+  // Restore scroll position function
+const restoreScrollPosition = useCallback(() => {
+  if (scrollViewRef.current && lastScrollPosition > 0) {
+    setTimeout(() => {
+      scrollViewRef.current.scrollTo({ 
+        y: lastScrollPosition, 
+        animated: false 
+      });
+    }, 100);
+  }
+}, [lastScrollPosition]);
 
   // Load user preferences
   const loadUserPreferences = async () => {
@@ -404,22 +434,107 @@ useEffect(() => {
     }
   };
 
-  // Gesture handlers
-  const panResponder = PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: (evt, gestureState) => {
-      return Math.abs(gestureState.dx) > 20 || Math.abs(gestureState.dy) > 20;
-    },
-    onPanResponderMove: (evt, gestureState) => {
-      if (fileType === 'image' && viewMode === 'text') {
-        const scale = Math.max(0.5, Math.min(3, zoomLevel + gestureState.dy * 0.01));
-        setZoomLevel(scale);
-      }
-    },
-    onPanResponderRelease: () => {
-      // Reset any temporary states
-    },
-  });
+const handleScroll = useCallback((event) => {
+  const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+  const scrollPosition = contentOffset.y;
+  const maxScroll = contentSize.height - layoutMeasurement.height;
+  const progress = maxScroll > 0 ? scrollPosition / maxScroll : 0;
+  
+  // Store in ref for immediate access
+  lastScrollPositionRef.current = scrollPosition;
+  setScrollContentHeight(contentSize.height);
+  
+  // Show scroll FAB when scrolling starts
+  if (!showScrollFab && scrollPosition > 50) {
+    setShowScrollFab(true);
+    Animated.timing(scrollFabAnimatedValue, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  }
+  
+  // Update FAB position to follow scroll progress (only if not being dragged)
+  if (!isScrollFabDragging && showScrollFab) {
+    const screenHeight = Dimensions.get('window').height;
+    const fabSize = Platform.OS === 'web' ? 60 : 80;
+    const headerHeight = 150; // Approximate header height
+    const availableHeight = screenHeight - headerHeight - fabSize - 50;
+    const fabY = headerHeight + (progress * availableHeight);
+    
+    setScrollFabPosition({ 
+      x: Platform.OS === 'web' ? 20 : 16, 
+      y: Math.max(headerHeight, Math.min(screenHeight - fabSize - 50, fabY))
+    });
+  }
+  
+  // Hide scroll FAB after scrolling stops
+  if (scrollIndicatorTimeoutRef.current) {
+    clearTimeout(scrollIndicatorTimeoutRef.current);
+  }
+  
+  scrollIndicatorTimeoutRef.current = setTimeout(() => {
+    if (showScrollFab && !isScrollFabDragging) {
+      Animated.timing(scrollFabAnimatedValue, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }).start(() => {
+        setShowScrollFab(false);
+      });
+    }
+  }, 3000); // Hide after 3 seconds of no scrolling
+  
+  // Update reading progress less frequently
+  if (Math.abs(scrollPosition - lastScrollPosition) > 200) {
+    setLastScrollPosition(scrollPosition);
+    setReadingProgress(Math.max(0, Math.min(1, progress)));
+  }
+}, [showScrollFab, isScrollFabDragging, lastScrollPosition]);
+
+const navigateToSearchResult = (direction) => {
+  if (searchResults.length === 0) return;
+  
+  const newIndex = direction === 'next' 
+    ? (currentSearchIndex + 1) % searchResults.length
+    : currentSearchIndex === 0 ? searchResults.length - 1 : currentSearchIndex - 1;
+  
+  setCurrentSearchIndex(newIndex);
+  
+  if (scrollViewRef.current && documentContent) {
+    const result = searchResults[newIndex];
+    // Calculate more accurate scroll position
+    const lines = documentContent.substring(0, result.index).split('\n').length;
+    const approximatePosition = lines * (fontSize * lineSpacing) - 100; // Offset for visibility
+    
+    scrollViewRef.current.scrollTo({ 
+      y: Math.max(0, approximatePosition), 
+      animated: true 
+    });
+  }
+};
+
+// NOW your useEffect hooks can safely reference all functions
+useEffect(() => {
+  if (routeParams.showAllDocuments) {
+    navigation.replace('DocumentLibrary');
+    return;
+  }
+}, [routeParams.showAllDocuments, navigation]);
+
+useEffect(() => {
+  loadUserPreferences();
+  restoreScrollPosition();
+}, [restoreScrollPosition]);
+
+// Add this cleanup effect
+useEffect(() => {
+  return () => {
+    if (scrollIndicatorTimeoutRef.current) {
+      clearTimeout(scrollIndicatorTimeoutRef.current);
+    }
+  };
+}, []);
 
   // Load document content
   useEffect(() => {
@@ -493,33 +608,42 @@ useEffect(() => {
     ]).start();
   }, []);
 
-  const loadDocumentContent = async () => {
-    try {
-      setLoading(true);
-      setProcessingProgress(0.1);
-      setError(null);
+const loadDocumentContent = async () => {
+  try {
+    setLoading(true);
+    setProcessingProgress(0.1);
+    setError(null);
 
-      setProcessingProgress(0.3);
-      
-      if (PlatformUtils.isWeb()) {
-        await loadWebDocument();
-      } else {
-        await loadMobileDocument();
-      }
-
-      setProcessingProgress(1.0);
-    } catch (error) {
-      console.error('Error loading document:', error);
-      setError(error.message || 'Failed to load document');
-      
-      AnalyticsService.trackEvent('document_load_error', {
-          documentType: getDocumentFormat(document),
-          error: error.message,
-        });
-    } finally {
-      setLoading(false);
+    setProcessingProgress(0.3);
+    
+    if (PlatformUtils.isWeb()) {
+      await loadWebDocument();
+    } else {
+      await loadMobileDocument();
     }
-  };
+
+    setProcessingProgress(1.0);
+  } catch (error) {
+    console.error('Error loading document:', error);
+    
+    // PDF-specific error handling
+    if (error.message.includes('WebView') || error.message.includes('PDF')) {
+      setError('PDF viewing not fully supported on this platform. You can download the file to view it.');
+      setViewMode('download'); // Force download mode
+      return;
+    }
+    
+    // Generic error handling
+    setError(error.message || 'Failed to load document');
+    
+    AnalyticsService.trackEvent('document_load_error', {
+        documentType: getDocumentFormat(document),
+        error: error.message,
+      });
+  } finally {
+    setLoading(false);
+  }
+};
 
   const loadWebDocument = async () => {
   try {
@@ -530,93 +654,63 @@ useEffect(() => {
       throw new Error('Document not found in storage');
     }
 
-    console.log('Found stored document:', storedDoc.id, 'has webFileData:', !!storedDoc.webFileData);
-    
     setProcessingProgress(0.6);
 
     // Check if we have web file data
     if (storedDoc.webFileData && Array.isArray(storedDoc.webFileData)) {
-      const uint8Array = new Uint8Array(storedDoc.webFileData);
-      
-      // Handle all text-based formats consistently  
       const documentFormat = getDocumentFormat(document);
-      if (['text', 'csv', 'word', 'excel'].includes(documentFormat)) {
-  try {
-    let content = '';
-    
-    if (documentFormat === 'text' || documentFormat === 'csv') {
-      const decoder = new TextDecoder('utf-8');
-      content = decoder.decode(uint8Array);
-    } else {
-      // For complex formats, show document info and provide processing option
-      content = `
-        Document Information
-        ==================
+      
+      if (['text', 'csv'].includes(documentFormat)) {
+        const uint8Array = new Uint8Array(storedDoc.webFileData);
+        const decoder = new TextDecoder('utf-8');
+        const content = decoder.decode(uint8Array);
+        setDocumentContent(content);
+        setViewMode('text');
+      } else if (['word', 'excel'].includes(documentFormat)) {
+        // Process complex documents through DocumentProcessor
+        try {
+          const extractionResult = await DocumentProcessor.extractDocumentText(storedDoc);
+          setDocumentContent(extractionResult.text);
+          setViewMode('text');
+        } catch (error) {
+          console.error('Document processing failed:', error);
+          // Show user-friendly message
+          const content = `
+Document Processing Required
+==========================
 
-        File: ${document.originalName}
-        Type: ${documentFormat.toUpperCase()} Document
-        Size: ${formatFileSize(document.size)}
-        Uploaded: ${new Date(document.uploadedAt).toLocaleDateString()}
+File: ${document.originalName}
+Type: ${documentFormat.toUpperCase()} Document
+Size: ${formatFileSize(document.size)}
 
-        This ${documentFormat} document is available for processing into a training plan.
+This document contains structured data that requires processing.
 
-        To extract and view the full content:
-        1. Navigate back to the upload screen
-        2. Use the "Process Document" option
-        3. The extracted content will be available in your training library
+To view the content:
+1. Go to Training Plans → Upload Plans
+2. Select this document for processing
+3. The processed content will be readable
 
-        Document Preview: First ${Math.min(500, uint8Array.length)} bytes shown as text below
-        ${'='.repeat(60)}
-
-        ${new TextDecoder('utf-8', {fatal: false}).decode(uint8Array.slice(0, 500))}
-
-        ${'='.repeat(60)}
-        End of preview. Full content available after processing.
-              `.trim();
-            }
-            
-            setDocumentContent(content);
-            setViewMode('text');
-          } catch (error) {
-            console.error('Content processing error:', error);
-            setError('Failed to process document content');
-          }
-        } else if (documentFormat === 'pdf') {
-          // PDFs use web viewer
-          const blob = new Blob([uint8Array], { type: document.type });
-          const url = URL.createObjectURL(blob);
-          setDocumentUrl(url);
-          setViewMode('web');
-        } else {
-          // Other formats
-          const blob = new Blob([uint8Array], { type: document.type });
-          const url = URL.createObjectURL(blob);
-          setDocumentUrl(url);
-          setViewMode('web');
+Current Status: Raw binary data cannot be displayed directly.
+          `.trim();
+          setDocumentContent(content);
+          setViewMode('text');
         }
+      } else if (documentFormat === 'pdf') {
+        try {
+          const uint8Array = new Uint8Array(storedDoc.webFileData);
+          const blob = new Blob([uint8Array], { type: 'application/pdf' });
+          const url = URL.createObjectURL(blob);
+          setDocumentUrl(url);
+          setViewMode('web');
+        } catch (error) {
+          setViewMode('download');
+          setError('PDF viewing not supported. Please download to view.');
+        }
+      }
       
       setProcessingProgress(0.9);
     } else {
-      // Fallback: try to use the original document object if it has file data
-      console.log('No webFileData found, checking original document object');
-      
-      if (document.file) {
-        console.log('Found file object in document');
-        
-        if (['text', 'csv'].includes(fileType)) {
-          const content = await document.file.text();
-          setDocumentContent(content);
-          setViewMode('text');
-        } else {
-          const url = URL.createObjectURL(document.file);
-          setDocumentUrl(url);
-          setViewMode('web');
-        }
-        
-        setProcessingProgress(0.9);
-      } else {
-        throw new Error('No file data available for this document. Try re-uploading the file.');
-      }
+      throw new Error('No file data available for this document. Try re-uploading the file.');
     }
   } catch (error) {
     console.error('Web document loading error:', error);
@@ -755,48 +849,6 @@ useEffect(() => {
     }
   };
 
-  const handleScroll = (event) => {
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    const scrollPosition = contentOffset.y;
-    const progress = scrollPosition / (contentSize.height - layoutMeasurement.height);
-    
-    setLastScrollPosition(scrollPosition);
-    setReadingProgress(Math.max(0, Math.min(1, progress)));
-    
-    // Auto-hide header on scroll
-    if (scrollPosition > 100) {
-      Animated.timing(headerOpacity, {
-        toValue: 0.7,
-        duration: 200,
-        useNativeDriver: true,
-      }).start();
-    } else {
-      Animated.timing(headerOpacity, {
-        toValue: 1,
-        duration: 200,
-        useNativeDriver: true,
-      }).start();
-    }
-  };
-
-  const navigateToSearchResult = (direction) => {
-    if (searchResults.length === 0) return;
-    
-    const newIndex = direction === 'next' 
-      ? (currentSearchIndex + 1) % searchResults.length
-      : currentSearchIndex === 0 ? searchResults.length - 1 : currentSearchIndex - 1;
-    
-    setCurrentSearchIndex(newIndex);
-    
-    // Scroll to result (implement based on your scroll view)
-    const result = searchResults[newIndex];
-    if (scrollViewRef.current && result) {
-      // Calculate approximate scroll position based on character index
-      const approximatePosition = (result.index / documentContent.length) * 1000; // Rough estimation
-      scrollViewRef.current.scrollTo({ y: approximatePosition, animated: true });
-    }
-  };
-
   const formatFileSize = (bytes) => {
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     if (bytes === 0) return '0 Bytes';
@@ -811,6 +863,191 @@ useEffect(() => {
     const remainingMins = minutes % 60;
     return `${hours}h ${remainingMins}m`;
   };
+
+  // Add this new component before your main return statement
+const renderScrollFab = () => {
+  if (!showScrollFab || viewMode !== 'text') return null;
+  
+  const fabSize = Platform.OS === 'web' ? 60 : 80;
+  const screenHeight = Dimensions.get('window').height;
+  const rightPosition = Platform.OS === 'web' ? 20 : 16;
+  const headerHeight = 150;
+  
+  const panResponder = PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    
+    onPanResponderGrant: (evt, gestureState) => {
+      setIsScrollFabDragging(true);
+      // Cancel auto-hide timeout
+      if (scrollIndicatorTimeoutRef.current) {
+        clearTimeout(scrollIndicatorTimeoutRef.current);
+      }
+      
+      // Visual feedback - slightly enlarge FAB
+      Animated.timing(scrollFabAnimatedValue, {
+        toValue: 1.1,
+        duration: 150,
+        useNativeDriver: true,
+      }).start();
+    },
+    
+    onPanResponderMove: (evt, gestureState) => {
+      if (Platform.OS === 'web') {
+        // Web: Direct scroll control
+        const availableHeight = screenHeight - headerHeight - 50;
+        const dragProgress = Math.max(0, Math.min(1, gestureState.moveY / availableHeight));
+        const scrollRange = scrollContentHeight - screenHeight + 200;
+        const targetScrollY = dragProgress * scrollRange;
+        
+        scrollViewRef.current?.scrollTo({ y: targetScrollY, animated: false });
+      } else {
+        // Mobile: Enhanced drag experience
+        const availableHeight = screenHeight - headerHeight - fabSize - 50;
+        const currentY = scrollFabPosition.y || (screenHeight / 2 - fabSize / 2);
+        const newY = Math.max(headerHeight, Math.min(screenHeight - fabSize - 50, currentY + gestureState.dy));
+        
+        // Update FAB position
+        setScrollFabPosition({ x: rightPosition, y: newY });
+        
+        // Calculate scroll position based on FAB position
+        const fabProgress = (newY - headerHeight) / availableHeight;
+        const scrollRange = scrollContentHeight - screenHeight + 200;
+        const targetScrollY = fabProgress * scrollRange;
+        
+        scrollViewRef.current?.scrollTo({ y: Math.max(0, targetScrollY), animated: false });
+      }
+    },
+    
+    onPanResponderRelease: (evt, gestureState) => {
+      setIsScrollFabDragging(false);
+      
+      // Return FAB to normal size
+      Animated.timing(scrollFabAnimatedValue, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+      
+      // Handle momentum scrolling on mobile
+      if (Platform.OS !== 'web' && Math.abs(gestureState.vy) > 1) {
+        const momentum = gestureState.vy * -800; // Increased for more responsive feel
+        const currentScroll = lastScrollPositionRef.current;
+        const targetScroll = Math.max(0, Math.min(
+          scrollContentHeight - screenHeight + 200, 
+          currentScroll + momentum
+        ));
+        
+        scrollViewRef.current?.scrollTo({ y: targetScroll, animated: true });
+      }
+      
+      // Reset auto-hide timer
+      scrollIndicatorTimeoutRef.current = setTimeout(() => {
+        if (!isScrollFabDragging) {
+          Animated.timing(scrollFabAnimatedValue, {
+            toValue: 0,
+            duration: 300,
+            useNativeDriver: true,
+          }).start(() => {
+            setShowScrollFab(false);
+          });
+        }
+      }, 4000);
+    },
+  });
+  
+  const currentProgress = scrollContentHeight > 0 
+    ? lastScrollPositionRef.current / Math.max(1, scrollContentHeight - screenHeight + 200)
+    : 0;
+  
+  // Use FAB position if set, otherwise calculate from progress
+  const fabTop = scrollFabPosition.y || (headerHeight + (currentProgress * (screenHeight - headerHeight - fabSize - 50)));
+  
+  return (
+    <Animated.View
+      style={[
+        styles.scrollFab,
+        {
+          opacity: scrollFabAnimatedValue.interpolate({
+            inputRange: [0, 1, 1.1],
+            outputRange: [0, 0.9, 1],
+          }),
+          transform: [
+            { 
+              scale: scrollFabAnimatedValue.interpolate({
+                inputRange: [0, 1, 1.1],
+                outputRange: [0.8, 1, 1.1],
+              })
+            }
+          ],
+          right: rightPosition,
+          top: fabTop,
+          width: fabSize,
+          height: fabSize,
+        }
+      ]}
+      {...panResponder.panHandlers}
+    >
+      <View style={[styles.scrollFabInner, { width: fabSize, height: fabSize }]}>
+        {Platform.OS === 'web' ? (
+          // Web version - compact scroll indicator
+          <>
+            <View style={styles.scrollTrack}>
+              <Animated.View 
+                style={[
+                  styles.scrollThumb, 
+                  { 
+                    top: `${Math.max(0, Math.min(85, currentProgress * 85))}%`,
+                    backgroundColor: isScrollFabDragging ? '#FFD700' : 'white',
+                  }
+                ]} 
+              />
+            </View>
+            <Text style={[styles.scrollPercentage, { 
+              color: isScrollFabDragging ? '#FFD700' : 'white' 
+            }]}>
+              {Math.round(currentProgress * 100)}%
+            </Text>
+          </>
+        ) : (
+          // Mobile version - enhanced drag interface
+          <>
+            <Icon 
+              name={isScrollFabDragging ? "drag-indicator" : "unfold-more"} 
+              size={isScrollFabDragging ? 28 : 24} 
+              color={isScrollFabDragging ? '#FFD700' : 'white'} 
+            />
+            <Text style={[styles.scrollFabText, {
+              color: isScrollFabDragging ? '#FFD700' : 'white'
+            }]}>
+              {isScrollFabDragging ? 'Scrolling...' : 'Drag'}
+            </Text>
+            <View style={[styles.scrollProgressRing, {
+              backgroundColor: isScrollFabDragging ? 'rgba(255, 215, 0, 0.3)' : 'rgba(255, 255, 255, 0.2)'
+            }]}>
+              <Text style={[styles.scrollFabProgress, {
+                color: isScrollFabDragging ? '#FFD700' : 'white'
+              }]}>
+                {Math.round(currentProgress * 100)}%
+              </Text>
+            </View>
+            
+            {/* Add scroll direction indicator */}
+            {isScrollFabDragging && (
+              <View style={styles.scrollDirectionIndicator}>
+                <View style={styles.scrollDirectionDots}>
+                  <View style={[styles.scrollDot, { opacity: 0.3 }]} />
+                  <View style={[styles.scrollDot, { opacity: 0.6 }]} />
+                  <View style={[styles.scrollDot, { opacity: 1.0 }]} />
+                </View>
+              </View>
+            )}
+          </>
+        )}
+      </View>
+    </Animated.View>
+  );
+};
 
   // Enhanced content renderers
   const renderDocumentContent = () => {
@@ -871,24 +1108,29 @@ useEffect(() => {
     }
   };
 
-  const renderTextContent = () => {
-    const dynamicStyles = {
-      fontSize: fontSize,
-      lineHeight: fontSize * lineSpacing,
-      color: darkMode ? COLORS.textLight : COLORS.textDark,
-      backgroundColor: darkMode ? COLORS.backgroundDark : COLORS.backgroundLight,
-    };
+      const renderTextContent = () => {
+        const dynamicStyles = {
+          fontSize: fontSize,
+          lineHeight: fontSize * lineSpacing,
+          color: darkMode ? COLORS.textLight : COLORS.textDark,
+          backgroundColor: darkMode ? COLORS.backgroundDark : COLORS.backgroundLight,
+        };
 
-    const lines = showLineNumbers ? documentContent.split('\n') : null;
+        const lines = showLineNumbers ? documentContent.split('\n') : null;
 
-    return (
-      <ScrollView 
-        style={[styles.textContainer, { backgroundColor: dynamicStyles.backgroundColor }]}
-        ref={scrollViewRef}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
-        {...panResponder.panHandlers}
-      >
+        return (
+          <ScrollView 
+            style={[styles.textContainer, { backgroundColor: dynamicStyles.backgroundColor }]}
+            ref={scrollViewRef}
+            onScroll={handleScroll}
+            scrollEventThrottle={100} // Increased from 16 to reduce frequency
+            showsVerticalScrollIndicator={true}
+            bounces={Platform.OS === 'ios'}
+            decelerationRate="normal"
+            removeClippedSubviews={true}
+            keyboardShouldPersistTaps="handled"
+            contentInsetAdjustmentBehavior="automatic"
+          >
         <Surface style={[styles.textContent, { backgroundColor: dynamicStyles.backgroundColor }]}>
           <View style={styles.textHeader}>
             <Text style={[styles.documentTitle, { color: dynamicStyles.color }]}>
@@ -990,43 +1232,72 @@ useEffect(() => {
     );
   };
 
-  const renderWebContent = () => (
-    <View style={styles.webContainer}>
-      {documentUrl ? (
-        <WebView
-          ref={webViewRef}
-          source={{ uri: documentUrl }}
-          style={styles.webView}
-          startInLoadingState={true}
-          renderLoading={() => (
-            <View style={styles.webViewLoading}>
-              <ActivityIndicator size="large" color={COLORS.primary} />
-              <Text>Loading document...</Text>
-            </View>
-          )}
-          onError={(syntheticEvent) => {
-            const { nativeEvent } = syntheticEvent;
-            console.warn('WebView error: ', nativeEvent);
-            setError('Failed to load document in viewer');
-          }}
-          onLoadProgress={({ nativeEvent }) => {
-            setProcessingProgress(nativeEvent.progress);
-          }}
-          onMessage={(event) => {
-            // Handle messages from WebView if needed
-            console.log('WebView message:', event.nativeEvent.data);
-          }}
-        />
-      ) : (
-        <View style={styles.errorContainer}>
-          <Icon name="error" size={48} color={COLORS.error} />
-          <Text style={[TEXT_STYLES.subtitle1, { marginTop: SPACING.md }]}>
-            Document URL not available
-          </Text>
-        </View>
-      )}
-    </View>
-  );
+const renderWebContent = () => {
+  if (PlatformUtils.isWeb()) {
+    return (
+      <View style={styles.webContainer}>
+        {documentUrl ? (
+          <div style={{ flex: 1, height: '100%', minHeight: '500px' }}>
+            <object
+              data={documentUrl}
+              type="application/pdf"
+              width="100%"
+              height="500px"
+              style={{ border: 'none' }}
+            >
+              <p>
+                Your browser doesn't support PDF viewing. 
+                <a href={documentUrl} target="_blank" rel="noopener noreferrer">
+                  Click here to download the PDF
+                </a>
+              </p>
+            </object>
+          </div>
+        ) : (
+          <View style={styles.errorContainer}>
+            <Icon name="error" size={48} color={COLORS.error} />
+            <Text style={[TEXT_STYLES.subtitle1, { marginTop: SPACING.md }]}>
+              PDF not available for viewing
+            </Text>
+            <Button
+              mode="contained"
+              onPress={handleDownload}
+              style={{ marginTop: SPACING.md }}
+              icon="download"
+            >
+              Download PDF
+            </Button>
+          </View>
+        )}
+      </View>
+    );
+  } else {
+    // Mobile WebView handling
+    return (
+      <View style={styles.webContainer}>
+        {WebView && documentUrl ? (
+          <WebView
+            source={{ uri: documentUrl }}
+            style={styles.webView}
+            startInLoadingState={true}
+          />
+        ) : (
+          <View style={styles.downloadContainer}>
+            <Icon name="picture-as-pdf" size={80} color="#FF5722" />
+            <Button
+              mode="contained"
+              onPress={handleDownload}
+              style={styles.actionButton}
+              icon="open-in-new"
+            >
+              Open in External App
+            </Button>
+          </View>
+        )}
+      </View>
+    );
+  }
+};
 
 const renderDownloadOption = () => {
     const documentFormat = getDocumentFormat(document);
@@ -1236,6 +1507,24 @@ const renderDownloadOption = () => {
               label: isFullscreen ? 'Exit Fullscreen' : 'Fullscreen',
               onPress: () => {
                 setIsFullscreen(!isFullscreen);
+                setShowMenu(false);
+              },
+              small: false,
+            },
+            {
+              icon: 'keyboard-arrow-up',
+              label: 'Scroll to Top',
+              onPress: () => {
+                scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+                setShowMenu(false);
+              },
+              small: false,
+            },
+            {
+              icon: 'keyboard-arrow-down',
+              label: 'Scroll to Bottom',
+              onPress: () => {
+                scrollViewRef.current?.scrollToEnd({ animated: true });
                 setShowMenu(false);
               },
               small: false,
@@ -1506,6 +1795,7 @@ const renderDownloadOption = () => {
 
       {/* Floating Actions */}
       {renderFloatingActions()}
+      {renderScrollFab()}
 
       {/* Info Modal */}
       <Portal>
@@ -2104,6 +2394,85 @@ toggleItem: {
 },
 toggleLabel: {
   fontSize: 16,
+},
+scrollFab: {
+  position: 'absolute',
+  backgroundColor: 'rgba(102, 126, 234, 0.9)',
+  borderRadius: 50,
+  elevation: 12, // Increased elevation
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 6 },
+  shadowOpacity: 0.4,
+  shadowRadius: 12,
+  zIndex: 1000,
+},
+scrollFabInner: {
+  borderRadius: 50,
+  justifyContent: 'center',
+  alignItems: 'center',
+  backgroundColor: 'rgba(102, 126, 234, 0.95)',
+  borderWidth: 2,
+  borderColor: 'rgba(255, 255, 255, 0.4)',
+  overflow: 'visible', // Allow direction indicator to show
+},
+scrollFabText: {
+  color: 'white',
+  fontSize: 10,
+  fontWeight: 'bold',
+  marginTop: 2,
+},
+scrollTrack: {
+  width: 4,
+  height: '70%',
+  backgroundColor: 'rgba(255, 255, 255, 0.3)',
+  borderRadius: 2,
+  position: 'relative',
+},
+scrollThumb: {
+  position: 'absolute',
+  width: 4,
+  height: '15%',
+  backgroundColor: 'white',
+  borderRadius: 2,
+},
+scrollPercentage: {
+  color: 'white',
+  fontSize: 10,
+  fontWeight: 'bold',
+  marginTop: 4,
+},
+scrollProgressRing: {
+  position: 'absolute',
+  bottom: 2,
+  right: 2,
+  width: 20,
+  height: 20,
+  borderRadius: 10,
+  backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  justifyContent: 'center',
+  alignItems: 'center',
+},
+scrollFabProgress: {
+  color: 'white',
+  fontSize: 8,
+  fontWeight: 'bold',
+},
+scrollDirectionIndicator: {
+  position: 'absolute',
+  left: -25,
+  top: '50%',
+  transform: [{ translateY: -10 }],
+},
+scrollDirectionDots: {
+  flexDirection: 'column',
+  alignItems: 'center',
+},
+scrollDot: {
+  width: 4,
+  height: 4,
+  borderRadius: 2,
+  backgroundColor: '#FFD700',
+  marginVertical: 1,
 },
 };
 

@@ -259,6 +259,22 @@ class PlatformUtils {
       return baseFormats;
     }
 
+    //check PDF viewing capability:
+    static isPDFViewingSupported() {
+  if (this.isWeb()) {
+    // Web browsers can display PDFs in iframe
+    return true;
+  } else {
+    // Mobile depends on WebView availability
+    try {
+      require('react-native-webview');
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+}
+
   // Enhanced error creation with platform context and integrity check support
   static createError(message, suggestions = [], errorType = 'general', metadata = {}) {
     const platformSuggestions = this.isWeb() 

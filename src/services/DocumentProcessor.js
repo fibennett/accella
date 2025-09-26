@@ -1172,22 +1172,65 @@ async extractWordTextUnified(document) {
     ]);
   }
   
+  // Validate this is actually a Word document
+  const type = document.type?.toLowerCase() || '';
+  const name = document.originalName?.toLowerCase() || '';
+  const isWordFile = type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || 
+                     type === 'application/msword' ||
+                     name.endsWith('.docx') || 
+                     name.endsWith('.doc');
+  
+  if (!isWordFile) {
+    return this.generateFormatFallback('Word', document, [
+      `File type mismatch: ${type}`,
+      'This appears to be an Excel or other file format',
+      'Use the correct document type for processing'
+    ]);
+  }
+  
   try {
     const fileData = await this.readDocumentData(document);
+    
+    const options = {
+      styleMap: [
+        "p[style-name='Heading 1'] => h1:fresh",
+        "p[style-name='Heading 2'] => h2:fresh",
+        "p[style-name='Heading 3'] => h3:fresh",
+      ]
+    };
+    
     const result = await mammoth.extractRawText({ 
       arrayBuffer: fileData.data.buffer || fileData.data 
-    });
+    }, options);
     
     if (!result.value || result.value.trim().length === 0) {
-      return this.generateFormatFallback('Word', document, ['Document appears to be empty']);
+      return this.generateFormatFallback('Word', document, ['Document appears to be empty or corrupted']);
     }
     
-    return result.value;
+    let cleanText = result.value
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/\u0000/g, '')
+      .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+      .trim();
+    
+    return `Word Document: ${document.originalName}\n${'='.repeat(50)}\n\n${cleanText}`;
   } catch (error) {
     console.error('Word extraction failed:', error);
-    return this.generateFormatFallback('Word', document, [`Extraction error: ${error.message}`]);
+    
+    // Check if error suggests wrong file type
+    if (error.message.includes('body element') || error.message.includes('docx file')) {
+      return this.generateFormatFallback('Word', document, [
+        'File is not a valid Word document',
+        'This may be an Excel file with .xlsx extension',
+        'Check the file type and try again'
+      ]);
+    }
+    
+    return this.generateFormatFallback('Word', document, [`Processing failed: ${error.message}`]);
   }
 }
+
 
 async extractExcelTextUnified(document) {
   if (!XLSX) {
@@ -1197,54 +1240,103 @@ async extractExcelTextUnified(document) {
     ]);
   }
   
+  // Validate this is actually an Excel document
+  const type = document.type?.toLowerCase() || '';
+  const name = document.originalName?.toLowerCase() || '';
+  const isExcelFile = type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || 
+                      type === 'application/vnd.ms-excel' ||
+                      name.endsWith('.xlsx') || 
+                      name.endsWith('.xls');
+  
+  if (!isExcelFile) {
+    return this.generateFormatFallback('Excel', document, [
+      `File type mismatch: ${type}`,
+      'This may not be an Excel file',
+      'Check the file extension and type'
+    ]);
+  }
+  
   try {
     const fileData = await this.readDocumentData(document);
-    const workbook = XLSX.read(fileData.data, { type: fileData.type });
+    
+    const workbook = XLSX.read(fileData.data, { 
+      type: fileData.type === 'buffer' ? 'buffer' : 'array',
+      cellText: true,
+      cellDates: true,
+      raw: false
+    });
     
     let text = `Excel Document: ${document.originalName}\n${'='.repeat(50)}\n\n`;
     
     workbook.SheetNames.forEach((sheetName, index) => {
       const worksheet = workbook.Sheets[sheetName];
-      const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+      const data = XLSX.utils.sheet_to_json(worksheet, { 
+        header: 1,
+        defval: '',
+        raw: false
+      });
       
       text += `Sheet ${index + 1}: ${sheetName}\n${'-'.repeat(30)}\n`;
       
       data.forEach((row, rowIndex) => {
-        const rowText = row
-          .filter(cell => cell !== null && cell !== undefined && cell !== '')
-          .join(' | ');
-        if (rowText.trim()) {
-          text += `Row ${rowIndex + 1}: ${rowText}\n`;
+        if (row && row.length > 0) {
+          const rowText = row
+            .map(cell => String(cell || '').trim())
+            .filter(cell => cell !== '')
+            .join(' | ');
+          
+          if (rowText) {
+            text += `${rowText}\n`;
+          }
         }
       });
       text += '\n';
     });
     
-    if (text.trim().length <= 100) {
-      return this.generateFormatFallback('Excel', document, ['No data found in spreadsheet']);
-    }
-    
     return text.trim();
   } catch (error) {
     console.error('Excel extraction failed:', error);
-    return this.generateFormatFallback('Excel', document, [`Extraction error: ${error.message}`]);
+    return this.generateFormatFallback('Excel', document, [`Processing failed: ${error.message}`]);
   }
 }
 
 async extractCSVTextUnified(document) {
   try {
     const fileData = await this.readDocumentData(document);
-    const decoder = new TextDecoder('utf-8');
-    let text = decoder.decode(fileData.data);
+    
+    // Enhanced CSV text decoding with encoding detection
+    let text;
+    try {
+      // Try UTF-8 first
+      const decoder = new TextDecoder('utf-8');
+      text = decoder.decode(fileData.data);
+    } catch (error) {
+      // Fallback to Latin-1 if UTF-8 fails
+      const decoder = new TextDecoder('latin1');
+      text = decoder.decode(fileData.data);
+    }
     
     if (!text || text.trim().length === 0) {
       return this.generateFormatFallback('CSV', document, ['File appears to be empty']);
     }
     
-    // Add header for better formatting
-    text = `CSV Document: ${document.originalName}\n${'='.repeat(50)}\n\n${text}`;
+    // Clean up CSV text
+    text = text
+      .replace(/\r\n/g, '\n')  // Normalize line endings
+      .replace(/\r/g, '\n')    // Handle old Mac line endings
+      .trim();
     
-    return text;
+    // Format CSV with proper headers and line numbers
+    const lines = text.split('\n');
+    let formattedText = `CSV Document: ${document.originalName}\n${'='.repeat(50)}\n\n`;
+    
+    lines.forEach((line, index) => {
+      if (line.trim()) {
+        formattedText += `${String(index + 1).padStart(3, ' ')}: ${line}\n`;
+      }
+    });
+    
+    return formattedText;
   } catch (error) {
     console.error('CSV extraction failed:', error);
     return this.generateFormatFallback('CSV', document, [`Extraction error: ${error.message}`]);
@@ -1254,17 +1346,40 @@ async extractCSVTextUnified(document) {
 async extractTextFileUnified(document) {
   try {
     const fileData = await this.readDocumentData(document);
-    const decoder = new TextDecoder('utf-8');
-    let text = decoder.decode(fileData.data);
+    
+    // Enhanced text decoding with encoding detection
+    let text;
+    try {
+      // Try UTF-8 first
+      const decoder = new TextDecoder('utf-8');
+      text = decoder.decode(fileData.data);
+    } catch (error) {
+      // Fallback to Latin-1 if UTF-8 fails
+      const decoder = new TextDecoder('latin1');
+      text = decoder.decode(fileData.data);
+    }
     
     if (!text || text.trim().length === 0) {
       return this.generateFormatFallback('Text', document, ['File appears to be empty']);
     }
     
-    // Add header for consistency
-    text = `Text Document: ${document.originalName}\n${'='.repeat(50)}\n\n${text}`;
+    // Clean up text
+    text = text
+      .replace(/\r\n/g, '\n')  // Normalize line endings
+      .replace(/\r/g, '\n')    // Handle old Mac line endings
+      .replace(/\u0000/g, '')  // Remove null characters
+      .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '') // Remove control characters
+      .trim();
     
-    return text;
+    // Add header for consistency with line numbers
+    const lines = text.split('\n');
+    let formattedText = `Text Document: ${document.originalName}\n${'='.repeat(50)}\n\n`;
+    
+    lines.forEach((line, index) => {
+      formattedText += `${String(index + 1).padStart(3, ' ')}: ${line}\n`;
+    });
+    
+    return formattedText;
   } catch (error) {
     console.error('Text extraction failed:', error);
     return this.generateFormatFallback('Text', document, [`Extraction error: ${error.message}`]);
@@ -1417,23 +1532,20 @@ validateFileForPlatform(file) {
 async readDocumentData(document) {
   try {
     if (PlatformUtils.isWeb()) {
-      // Try stored data first, then original file
-      const documents = await this.getStoredDocuments();
-      const storedDoc = documents.find(doc => doc.id === document.id);
-      
-      if (storedDoc?.webFileData) {
+      // For web, prioritize stored webFileData
+      if (document.webFileData && Array.isArray(document.webFileData)) {
         return {
           type: 'array',
-          data: new Uint8Array(storedDoc.webFileData)
+          data: new Uint8Array(document.webFileData)
         };
-      } else if (document.file) {
+      } else if (document.file && typeof document.file.arrayBuffer === 'function') {
         const buffer = await document.file.arrayBuffer();
         return {
           type: 'array', 
           data: new Uint8Array(buffer)
         };
       } else {
-        throw PlatformUtils.createError('File data not accessible');
+        throw PlatformUtils.createError('File data not accessible - document may need to be re-uploaded');
       }
     } else {
       // Mobile file reading
@@ -1483,6 +1595,27 @@ Document Information Available:
   `.trim();
 }
 
+getDocumentFormat(document) {
+  const type = document.type?.toLowerCase() || '';
+  const name = document.originalName?.toLowerCase() || '';
+  
+  // More specific MIME type checking first
+  if (type === 'application/pdf' || name.endsWith('.pdf')) return 'pdf';
+  if (type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || name.endsWith('.docx')) return 'word';
+  if (type === 'application/msword' || name.endsWith('.doc')) return 'word';
+  if (type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || name.endsWith('.xlsx')) return 'excel';
+  if (type === 'application/vnd.ms-excel' || name.endsWith('.xls')) return 'excel';
+  if (type === 'text/csv' || name.endsWith('.csv')) return 'csv';
+  if (type === 'text/plain' || name.endsWith('.txt')) return 'text';
+  
+  // Fallback to generic checks
+  if (type.includes('word') || type.includes('document')) return 'word';
+  if (type.includes('excel') || type.includes('sheet')) return 'excel';
+  if (type.includes('text') || type.includes('plain')) return 'text';
+  
+  return 'unknown';
+}
+
 // ADD this entirely new method
 async extractDocumentText(document) {
   const format = this.getDocumentFormat(document);
@@ -1491,9 +1624,6 @@ async extractDocumentText(document) {
     let extractedText = '';
     
     switch (format) {
-      case 'pdf':
-        extractedText = await this.extractPDFTextUnified(document);
-        break;
       case 'word':
         extractedText = await this.extractWordTextUnified(document);
         break;
@@ -1506,11 +1636,11 @@ async extractDocumentText(document) {
       case 'text':
         extractedText = await this.extractTextFileUnified(document);
         break;
+      case 'pdf':
+        extractedText = await this.extractPDFTextUnified(document);
+        break;
       default:
-        throw PlatformUtils.createError(`Unsupported format: ${format}`, [
-          'Convert to supported format (.pdf, .docx, .xlsx, .csv, .txt)',
-          'Check if file extension matches content'
-        ]);
+        throw PlatformUtils.createError(`Unsupported format: ${format}`);
     }
     
     if (!extractedText || extractedText.trim().length === 0) {
