@@ -1,3 +1,4 @@
+//src/coach/dashboard/UpcomingSessions.js
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
@@ -533,7 +534,7 @@ const UpcomingSessions = ({ navigation }) => {
       <FAB
         icon="plus"
         style={[styles.fab, { backgroundColor: COLORS.primary }]}
-        onPress={() => navigation.navigate('CreateSession')}
+        onPress={() => navigation.navigate('SessionBuilder')}
         label="New Session"
       />
 

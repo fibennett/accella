@@ -37,6 +37,7 @@ import { COLORS } from '../../../styles/colors';
 import { SPACING } from '../../../styles/spacing';
 import { TEXT_STYLES } from '../../../styles/textStyles';
 import DocumentProcessor from '../../../services/DocumentProcessor';
+import SessionExtractor from '../../../services/SessionExtractor'; 
 import DocumentViewer from '../../shared/DocumentViewer';
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const TrainingPlanDetails = ({ navigation, route }) => {
@@ -64,6 +65,8 @@ const TrainingPlanDetails = ({ navigation, route }) => {
   const [sourceDocument, setSourceDocument] = useState(null);
   const [allDocuments, setAllDocuments] = useState([]);
   const [loadingDocs, setLoadingDocs] = useState(true);
+  const [extractedSessions, setExtractedSessions] = useState([]);
+  const [loadingSessions, setLoadingSessions] = useState(false);
 
   // Difficulty colors mapping
   const difficultyColors = {
@@ -109,6 +112,13 @@ useEffect(() => {
     loadAllDocuments();
   }
 }, [activeTab]);
+
+  // load sessions when the tab becomes active
+  useEffect(() => {
+    if (activeTab === 'sessions' && plan?.sourceDocument && extractedSessions.length === 0) {
+      loadSessionsFromDocument();
+    }
+  }, [activeTab, plan?.sourceDocument]);
 
   // Load plan data
   useEffect(() => {
@@ -541,6 +551,69 @@ const showDocumentOptions = (document) => {
       { text: 'Cancel', style: 'cancel' }
     ]
   );
+};
+
+const handleDailySessionPress = (dailySession, weekSession) => {
+  navigation.navigate('SessionScheduleScreen', {
+    sessionData: {
+      ...dailySession,
+      weekData: weekSession,
+      planTitle: plan.title,
+      academyName: dailySession.academyName || plan.title
+    },
+    planTitle: plan.title,
+    academyName: dailySession.academyName || plan.title
+  });
+};
+
+const handleScheduleSession = (session) => {
+  navigation.navigate('SessionScheduler', {
+    prefillData: session,
+    planId: plan.id
+  });
+};
+
+const handleStartSession = (session) => {
+  Alert.alert(
+    'Start Session',
+    `Ready to start "${session.title}"?`,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Start',
+        onPress: () => {
+          navigation.navigate('ActiveSession', {
+            sessionId: session.id,
+            sessionData: session
+          });
+        }
+      }
+    ]
+  );
+};
+
+
+
+// Move this function to component level (around line 300)
+const loadSessionsFromDocument = async () => {
+  try {
+    setLoadingSessions(true);
+    const documents = await DocumentProcessor.getStoredDocuments();
+    const sourceDoc = documents.find(doc => doc.id === plan.sourceDocument);
+    
+    if (sourceDoc) {
+      const extractionResult = await SessionExtractor.extractSessionsFromDocument(sourceDoc, plan);
+      if (extractionResult && extractionResult.sessions) {
+        setExtractedSessions(extractionResult.sessions);
+      }
+    }
+  } catch (error) {
+    console.error('Error loading sessions:', error);
+    setSnackbarMessage('Failed to load sessions from document');
+    setSnackbarVisible(true);
+  } finally {
+    setLoadingSessions(false);
+  }
 };
 
 const processDocumentAsPlan = (document) => {
@@ -1050,84 +1123,137 @@ const fabConfigs = {
 };
 
 
-  const renderSessions = () => (
+const renderSessions = () => {
+
+  if (loadingSessions) {
+    return (
+      <View style={{ padding: SPACING.md, alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={{ marginTop: SPACING.md }}>Loading sessions from document...</Text>
+      </View>
+    );
+  }
+
+  return (
     <View style={{ padding: SPACING.md }}>
-      {plan.sessions && plan.sessions.length > 0 ? (
+      {extractedSessions.length > 0 ? (
         <FlatList
-          data={plan.sessions}
-          keyExtractor={(item, index) => item.id || index.toString()}
-          renderItem={({ item: session, index }) => (
-            <Card style={styles.sessionCard}>
+          data={extractedSessions}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item: weekSession, index }) => (
+            <Card style={styles.weekSessionCard}>
               <TouchableOpacity
-                onPress={() => toggleSessionExpanded(session.id || index)}
+                onPress={() => toggleSessionExpanded(weekSession.id)}
                 activeOpacity={0.7}
               >
                 <Card.Content>
-                  <View style={styles.sessionHeader}>
+                  <View style={styles.weekSessionHeader}>
                     <View style={{ flex: 1 }}>
-                      <Text style={[TEXT_STYLES.subtitle1, { fontWeight: 'bold' }]}>
-                        Session {session.id || (index + 1)}: {session.title}
+                      <Text style={[TEXT_STYLES.h3, { fontWeight: 'bold', color: COLORS.primary }]}>
+                        Week {weekSession.weekNumber}
                       </Text>
-                      {session.duration && (
-                        <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
-                          Duration: {session.duration}
-                        </Text>
-                      )}
+                      <Text style={[TEXT_STYLES.subtitle1, { marginTop: 4 }]}>
+                        {weekSession.title}
+                      </Text>
+                      <Text style={[TEXT_STYLES.body2, { color: COLORS.textSecondary, marginTop: 4 }]}>
+                        {weekSession.dailySessions.length} training session{weekSession.dailySessions.length > 1 ? 's' : ''} • {weekSession.totalDuration} minutes total
+                      </Text>
                     </View>
-                    <IconButton
-                      icon={expandedSessions[session.id || index] ? 'expand-less' : 'expand-more'}
-                      size={20}
-                    />
+                    <View style={styles.weekSessionActions}>
+                      <Chip style={{ backgroundColor: COLORS.primary + '20' }}>
+                        <Text style={{ color: COLORS.primary, fontSize: 12 }}>
+                          {weekSession.dailySessions.length} days
+                        </Text>
+                      </Chip>
+                      <IconButton
+                        icon={expandedSessions[weekSession.id] ? 'expand-less' : 'expand-more'}
+                        size={20}
+                        onPress={() => toggleSessionExpanded(weekSession.id)}
+                      />
+                    </View>
                   </View>
-                  
-                  {expandedSessions[session.id || index] && (
-                    <View style={{ marginTop: SPACING.md }}>
-                      {session.exercises && session.exercises.length > 0 && (
-                        <View style={{ marginBottom: SPACING.sm }}>
-                          <Text style={[TEXT_STYLES.body2, { fontWeight: 'bold', marginBottom: SPACING.xs }]}>
-                            Exercises:
-                          </Text>
-                          {session.exercises.map((exercise, exIndex) => (
-                            <Text key={exIndex} style={[TEXT_STYLES.body2, styles.exerciseItem]}>
-                              • {exercise}
-                            </Text>
-                          ))}
-                        </View>
-                      )}
-                      
-                      {session.notes && session.notes.length > 0 && (
-                        <View>
-                          <Text style={[TEXT_STYLES.body2, { fontWeight: 'bold', marginBottom: SPACING.xs }]}>
-                            Notes:
-                          </Text>
-                          {session.notes.map((note, noteIndex) => (
-                            <Text key={noteIndex} style={[TEXT_STYLES.body2, styles.noteItem]}>
-                              {note}
-                            </Text>
-                          ))}
-                        </View>
-                      )}
 
-                      <View style={styles.sessionActions}>
-                        <Button
-                          mode="outlined"
-                          compact
-                          onPress={() => handleSessionPress(session)}
-                          style={{ marginRight: SPACING.sm }}
+                  {weekSession.description && (
+                    <Text style={[TEXT_STYLES.body2, { marginTop: SPACING.sm, color: COLORS.textSecondary }]}>
+                      {weekSession.description}
+                    </Text>
+                  )}
+
+                  {expandedSessions[weekSession.id] && (
+                    <View style={{ marginTop: SPACING.md }}>
+                      <Text style={[TEXT_STYLES.subtitle2, { fontWeight: 'bold', marginBottom: SPACING.sm }]}>
+                        Training Sessions:
+                      </Text>
+                      
+                      {weekSession.dailySessions.map((dailySession, sessionIndex) => (
+                        <TouchableOpacity
+                          key={dailySession.id}
+                          onPress={() => handleDailySessionPress(dailySession, weekSession)}
+                          style={styles.dailySessionItem}
                         >
-                          View Details
-                        </Button>
-                        <Button
-                          mode="contained"
-                          compact
-                          onPress={() => {
-                            setSnackbarMessage(`Started session: ${session.title}`);
-                            setSnackbarVisible(true);
-                          }}
-                        >
-                          Start Session
-                        </Button>
-                      </View>
+                          <View style={styles.dailySessionHeader}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={[TEXT_STYLES.subtitle1, { fontWeight: '600' }]}>
+                                {dailySession.day === 'week_plan' ? 'Weekly Overview' : `${dailySession.day.charAt(0).toUpperCase() + dailySession.day.slice(1)} Training`}
+                              </Text>
+                              <View style={styles.sessionMetaInfo}>
+                                <Icon name="schedule" size={14} color={COLORS.textSecondary} />
+                                <Text style={[TEXT_STYLES.caption, { marginLeft: 4, color: COLORS.textSecondary }]}>
+                                  {dailySession.time} • {dailySession.duration}min
+                                </Text>
+                                <Text style={{ color: COLORS.textSecondary, marginHorizontal: 8 }}>•</Text>
+                                <Icon name="location-on" size={14} color={COLORS.textSecondary} />
+                                <Text style={[TEXT_STYLES.caption, { marginLeft: 4, color: COLORS.textSecondary }]}>
+                                  {dailySession.location}
+                                </Text>
+                              </View>
+                              
+                              {dailySession.focus && dailySession.focus.length > 0 && (
+                                <View style={{ flexDirection: 'row', marginTop: SPACING.xs }}>
+                                  {dailySession.focus.slice(0, 3).map((focus, idx) => (
+                                    <Chip
+                                      key={idx}
+                                      compact
+                                      mode="outlined"
+                                      style={{ marginRight: 4, height: 20 }}
+                                      textStyle={{ fontSize: 10 }}
+                                    >
+                                      {focus}
+                                    </Chip>
+                                  ))}
+                                </View>
+                              )}
+                            </View>
+                            
+                            <View style={styles.sessionActions}>
+                              <Button
+                                mode="outlined"
+                                compact
+                                onPress={(e) => {
+                                  e.stopPropagation();
+                                  handleScheduleSession(dailySession);
+                                }}
+                                style={{ marginRight: SPACING.xs }}
+                                contentStyle={{ height: 28 }}
+                              >
+                                Schedule
+                              </Button>
+                              <Button
+                                mode="contained"
+                                compact
+                                onPress={(e) => {
+                                  e.stopPropagation();
+                                  handleStartSession(dailySession);
+                                }}
+                                style={{ backgroundColor: COLORS.success }}
+                                contentStyle={{ height: 28 }}
+                              >
+                                Start
+                              </Button>
+                            </View>
+                          </View>
+                        </TouchableOpacity>
+                      ))}
                     </View>
                   )}
                 </Card.Content>
@@ -1135,6 +1261,16 @@ const fabConfigs = {
             </Card>
           )}
           scrollEnabled={false}
+          ListHeaderComponent={() => (
+            <View style={styles.sessionsHeader}>
+              <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.sm }]}>
+                Training Sessions ({extractedSessions.length} weeks)
+              </Text>
+              <Text style={[TEXT_STYLES.body2, { color: COLORS.textSecondary, marginBottom: SPACING.md }]}>
+                Sessions extracted from: {plan.originalName || plan.title}
+              </Text>
+            </View>
+          )}
         />
       ) : (
         <View style={styles.emptyState}>
@@ -1143,19 +1279,20 @@ const fabConfigs = {
             No Sessions Available
           </Text>
           <Text style={[TEXT_STYLES.body2, { marginTop: SPACING.sm, textAlign: 'center', color: COLORS.textSecondary }]}>
-            This training plan doesn't have detailed sessions yet.
+            Sessions will be automatically extracted from your training document.
           </Text>
           <Button
             mode="contained"
             style={{ marginTop: SPACING.md }}
-            onPress={() => navigation.navigate('SessionBuilder', { planId: plan.id })}
+            onPress={loadSessionsFromDocument}
           >
-            Add Sessions
+            Extract Sessions
           </Button>
         </View>
       )}
     </View>
   );
+};
 
   const renderProgress = () => (
     <View style={{ padding: SPACING.md }}>
@@ -1959,6 +2096,46 @@ pinnedFavoriteCard: {
   borderLeftWidth: 4,
   borderLeftColor: '#2196F3',
   backgroundColor: '#E8F5E8',
+},
+weekSessionCard: {
+  marginBottom: SPACING.md,
+  borderRadius: 12,
+  elevation: 2,
+},
+weekSessionHeader: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'flex-start',
+},
+weekSessionActions: {
+  flexDirection: 'row',
+  alignItems: 'center',
+},
+dailySessionItem: {
+  backgroundColor: COLORS.surface,
+  borderRadius: 8,
+  padding: SPACING.md,
+  marginBottom: SPACING.sm,
+  borderLeftWidth: 3,
+  borderLeftColor: COLORS.primary,
+},
+dailySessionHeader: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+},
+sessionMetaInfo: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  marginTop: 4,
+},
+sessionActions: {
+  flexDirection: 'row',
+  alignItems: 'center',
+},
+sessionsHeader: {
+  marginBottom: SPACING.md,
+  paddingHorizontal: SPACING.sm,
 },
 };
 

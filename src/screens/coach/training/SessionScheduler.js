@@ -1,3 +1,4 @@
+//src/screens/coach/training/SessionScheduler.js
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
@@ -26,14 +27,23 @@ import {
   Portal,
   Searchbar,
   ProgressBar,
+  ActivityIndicator,
+  Snackbar,
 } from 'react-native-paper';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useSelector, useDispatch } from 'react-redux';
+
+// Services
+import SessionExtractor from '../../../services/SessionExtractor';
+import DocumentProcessor from '../../../services/DocumentProcessor';
+
+// Design system
 import { COLORS } from '../../../styles/colors';
 import { SPACING } from '../../../styles/spacing';
 import { TEXT_STYLES } from '../../../styles/textStyles';
 import { TYPOGRAPHY } from '../../../styles/typography';
 import { LAYOUT } from '../../../styles/layout';
+
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -48,15 +58,25 @@ const { width, height } = Dimensions.get('window');
 const SessionScheduler = ({ navigation }) => {
   const dispatch = useDispatch();
   const { user, coachData } = useSelector((state) => state.auth);
-  const { sessions, players, trainingPlans } = useSelector((state) => state.coach);
 
   const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [viewMode, setViewMode] = useState('week'); // week, month, day
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [selectedFilters, setSelectedFilters] = useState([]);
+  const [snackbarVisible, setSnackbarVisible] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
+
+  // Session data
+  const [extractedSessions, setExtractedSessions] = useState([]);
+  const [manualSessions, setManualSessions] = useState([]);
+  const [trainingPlans, setTrainingPlans] = useState([]);
+  const [allSessions, setAllSessions] = useState([]);
+
+  // Create session state
   const [newSession, setNewSession] = useState({
     title: '',
     description: '',
@@ -71,45 +91,7 @@ const SessionScheduler = ({ navigation }) => {
   });
 
   const scrollY = useSharedValue(0);
-  const fabScale = useSharedValue(1);
-
-  // Sample data - replace with Redux state
-  const upcomingSessions = [
-    {
-      id: 1,
-      title: 'Morning Training Session',
-      date: '2024-12-27',
-      time: '09:00',
-      duration: 90,
-      location: 'Main Field',
-      type: 'training',
-      players: ['John Doe', 'Jane Smith', 'Mike Johnson'],
-      status: 'scheduled',
-      trainingPlan: 'Week 1 - Endurance Building',
-    },
-    {
-      id: 2,
-      title: 'Team Strategy Meeting',
-      date: '2024-12-27',
-      time: '14:00',
-      duration: 60,
-      location: 'Conference Room',
-      type: 'meeting',
-      players: ['John Doe', 'Jane Smith'],
-      status: 'confirmed',
-    },
-    {
-      id: 3,
-      title: 'Individual Skills Training',
-      date: '2024-12-28',
-      time: '10:00',
-      duration: 45,
-      location: 'Training Ground A',
-      type: 'individual',
-      players: ['Mike Johnson'],
-      status: 'scheduled',
-    },
-  ];
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   const sessionTypes = [
     { id: 'training', label: 'Training', icon: 'fitness-center', color: COLORS.primary },
@@ -117,6 +99,7 @@ const SessionScheduler = ({ navigation }) => {
     { id: 'individual', label: 'Individual', icon: 'person', color: COLORS.success },
     { id: 'assessment', label: 'Assessment', icon: 'assessment', color: COLORS.warning },
     { id: 'recovery', label: 'Recovery', icon: 'spa', color: COLORS.info },
+    { id: 'match', label: 'Match', icon: 'sports-soccer', color: COLORS.error },
   ];
 
   const timeSlots = Array.from({ length: 15 }, (_, i) => {
@@ -125,25 +108,90 @@ const SessionScheduler = ({ navigation }) => {
     return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
   });
 
+  // Initialize data
   useEffect(() => {
-    loadScheduleData();
-  }, [selectedDate, viewMode]);
+    initializeSessionData();
+  }, []);
 
-  const loadScheduleData = async () => {
+  // Animation setup
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 800,
+      useNativeDriver: true,
+    }).start();
+  }, []);
+
+  const initializeSessionData = async () => {
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      // dispatch(fetchCoachSessions({ date: selectedDate, viewMode }));
+      setLoading(true);
+      console.log('Initializing session data...');
+
+      // Load training plans
+      const plans = await DocumentProcessor.getTrainingPlans();
+      setTrainingPlans(plans);
+      console.log('Loaded training plans:', plans.length);
+
+      // Extract sessions from all training plans
+      const allExtractedSessions = [];
+      
+      for (const plan of plans) {
+        try {
+          console.log('Processing plan:', plan.title);
+          
+          // Check if we have a source document for this plan
+          if (plan.sourceDocument) {
+            const documents = await DocumentProcessor.getStoredDocuments();
+            const sourceDoc = documents.find(doc => doc.id === plan.sourceDocument);
+            
+            if (sourceDoc) {
+              console.log('Found source document for plan:', plan.title);
+              
+              // Extract sessions from the document
+              const extractionResult = await SessionExtractor.extractSessionsFromDocument(sourceDoc, plan);
+              
+              if (extractionResult && extractionResult.sessions) {
+                // Convert to upcoming sessions format
+                const upcomingSessions = SessionExtractor.convertToUpcomingSessions(extractionResult);
+                allExtractedSessions.push(...upcomingSessions);
+                console.log('Extracted sessions for plan:', plan.title, 'Count:', upcomingSessions.length);
+              }
+            } else {
+              console.warn('Source document not found for plan:', plan.title);
+            }
+          } else {
+            console.warn('No source document reference for plan:', plan.title);
+          }
+        } catch (error) {
+          console.error('Error processing plan:', plan.title, error.message);
+        }
+      }
+
+      setExtractedSessions(allExtractedSessions);
+      console.log('Total extracted sessions:', allExtractedSessions.length);
+
+      // Combine with manual sessions (from your existing mock data or database)
+      const combinedSessions = [
+        ...allExtractedSessions,
+        ...manualSessions
+      ].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+      setAllSessions(combinedSessions);
+
     } catch (error) {
-      console.error('Error loading schedule data:', error);
+      console.error('Error initializing session data:', error);
+      setSnackbarMessage('Failed to load session data');
+      setSnackbarVisible(true);
+    } finally {
+      setLoading(false);
     }
   };
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadScheduleData();
+    await initializeSessionData();
     setRefreshing(false);
-  }, [selectedDate, viewMode]);
+  }, []);
 
   const handleCreateSession = async () => {
     try {
@@ -153,16 +201,36 @@ const SessionScheduler = ({ navigation }) => {
       }
 
       Vibration.vibrate(50);
-      
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+
+      // Create manual session
+      const session = {
+        id: `manual_${Date.now()}`,
+        ...newSession,
+        date: newSession.date.toISOString().split('T')[0],
+        status: 'scheduled',
+        createdAt: new Date().toISOString(),
+        isManual: true,
+        academyName: coachData?.academyName || 'Training Academy',
+        sport: 'General',
+      };
+
+      const updatedManualSessions = [...manualSessions, session];
+      setManualSessions(updatedManualSessions);
+
+      // Update all sessions
+      const combinedSessions = [
+        ...extractedSessions,
+        ...updatedManualSessions
+      ].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+      setAllSessions(combinedSessions);
+
       Alert.alert(
-        'Success! 🎉',
+        'Success!',
         'Training session has been scheduled successfully',
         [{ text: 'OK', onPress: () => setShowCreateModal(false) }]
       );
-      
+
       // Reset form
       setNewSession({
         title: '',
@@ -176,48 +244,133 @@ const SessionScheduler = ({ navigation }) => {
         trainingPlan: null,
         notes: '',
       });
-      
+
     } catch (error) {
       Alert.alert('Error', 'Failed to create session. Please try again.');
     }
   };
 
-  const handleEditSession = (session) => {
-    navigation.navigate('SessionDetails', { sessionId: session.id, mode: 'edit' });
+  const handleSessionPress = (session) => {
+    // Navigate to detailed session view
+    navigation.navigate('SessionScheduleScreen', {
+      sessionData: session,
+      planTitle: session.trainingPlanTitle || 'Training Session',
+      academyName: session.academyName || 'Training Academy'
+    });
   };
 
-  const handleCancelSession = (sessionId) => {
+  const handleStartSession = (session) => {
     Alert.alert(
-      'Cancel Session',
-      'Are you sure you want to cancel this training session?',
+      'Start Session',
+      `Ready to start "${session.title}"?`,
       [
-        { text: 'No', style: 'cancel' },
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Yes, Cancel',
-          style: 'destructive',
+          text: 'Start',
           onPress: () => {
-            Vibration.vibrate(100);
-            // dispatch(cancelSession(sessionId));
-            Alert.alert('Cancelled', 'Session has been cancelled');
+            navigation.navigate('ActiveSession', { 
+              sessionId: session.id,
+              sessionData: session 
+            });
           }
         }
       ]
     );
   };
 
+  const handleEditSession = (session) => {
+    if (session.isManual) {
+      // Can edit manual sessions
+      setNewSession({
+        ...session,
+        date: new Date(session.date),
+      });
+      setShowCreateModal(true);
+    } else {
+      // For extracted sessions, navigate to plan details
+      Alert.alert(
+        'Edit Session',
+        'This session is part of a training plan. Edit the original document to modify.',
+        [
+          { text: 'OK' },
+          {
+            text: 'View Plan',
+            onPress: () => navigation.navigate('TrainingPlanDetails', { 
+              planId: session.sourcePlan 
+            })
+          }
+        ]
+      );
+    }
+  };
+
   const getSessionTypeConfig = (type) => {
     return sessionTypes.find(t => t.id === type) || sessionTypes[0];
   };
 
-  const getDayName = (date) => {
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    return days[date.getDay()];
+  const getDifficultyColor = (difficulty) => {
+    const colors = {
+      'Beginner': COLORS.success,
+      'Intermediate': '#FF9800',
+      'Advanced': COLORS.error,
+      'beginner': COLORS.success,
+      'intermediate': '#FF9800',
+      'advanced': COLORS.error,
+    };
+    return colors[difficulty] || COLORS.textSecondary;
   };
 
-  const getMonthName = (date) => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return months[date.getMonth()];
+  const formatSessionDate = (date) => {
+    const sessionDate = new Date(date);
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    if (sessionDate.toDateString() === today.toDateString()) {
+      return 'Today';
+    } else if (sessionDate.toDateString() === tomorrow.toDateString()) {
+      return 'Tomorrow';
+    } else {
+      return sessionDate.toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric',
+        weekday: 'short'
+      });
+    }
   };
+
+  const getWeekLabel = (session) => {
+    if (session.weekNumber) {
+      return `Week ${session.weekNumber}`;
+    }
+    return 'Training';
+  };
+
+  // Filter sessions based on search and filters
+  const filteredSessions = allSessions.filter(session => {
+    const matchesSearch = session.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         (session.location && session.location.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                         (session.academyName && session.academyName.toLowerCase().includes(searchQuery.toLowerCase()));
+
+    const matchesFilter = selectedFilters.length === 0 || 
+                         selectedFilters.some(filter => 
+                           session.type?.toLowerCase().includes(filter.toLowerCase()) ||
+                           session.sport?.toLowerCase().includes(filter.toLowerCase()) ||
+                           session.difficulty?.toLowerCase().includes(filter.toLowerCase())
+                         );
+
+    return matchesSearch && matchesFilter;
+  });
+
+  // Group sessions by date
+  const groupedSessions = filteredSessions.reduce((groups, session) => {
+    const date = session.date;
+    if (!groups[date]) {
+      groups[date] = [];
+    }
+    groups[date].push(session);
+    return groups;
+  }, {});
 
   const renderHeader = () => (
     <Animated.View entering={FadeInDown.delay(100)}>
@@ -236,10 +389,10 @@ const SessionScheduler = ({ navigation }) => {
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: SPACING.md }}>
           <View>
             <Text style={[TEXT_STYLES.header, { color: 'white', fontSize: 28 }]}>
-              Schedule 📅
+              Training Sessions
             </Text>
             <Text style={[TEXT_STYLES.body, { color: 'rgba(255,255,255,0.8)', marginTop: 4 }]}>
-              Manage your training sessions
+              {allSessions.length} sessions scheduled
             </Text>
           </View>
           <Avatar.Text
@@ -250,373 +403,230 @@ const SessionScheduler = ({ navigation }) => {
           />
         </View>
 
-        {/* View Mode Selector */}
-        <View style={{ flexDirection: 'row', marginBottom: SPACING.md }}>
-          {['day', 'week', 'month'].map((mode) => (
-            <TouchableOpacity
-              key={mode}
-              onPress={() => setViewMode(mode)}
-              style={{
-                flex: 1,
-                paddingVertical: SPACING.sm,
-                paddingHorizontal: SPACING.md,
-                backgroundColor: viewMode === mode ? 'rgba(255,255,255,0.3)' : 'transparent',
-                borderRadius: 20,
-                marginHorizontal: 4,
-                alignItems: 'center',
-              }}
-            >
-              <Text style={[TEXT_STYLES.body, {
-                color: 'white',
-                fontWeight: viewMode === mode ? 'bold' : 'normal',
-                textTransform: 'capitalize',
-              }]}>
-                {mode}
-              </Text>
-            </TouchableOpacity>
-          ))}
+        {/* Quick Stats */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: SPACING.md }}>
+          <Surface style={styles.statCard}>
+            <Text style={styles.statNumber}>{extractedSessions.length}</Text>
+            <Text style={styles.statLabel}>From Plans</Text>
+          </Surface>
+          <Surface style={styles.statCard}>
+            <Text style={styles.statNumber}>{manualSessions.length}</Text>
+            <Text style={styles.statLabel}>Manual</Text>
+          </Surface>
+          <Surface style={styles.statCard}>
+            <Text style={styles.statNumber}>{trainingPlans.length}</Text>
+            <Text style={styles.statLabel}>Plans</Text>
+          </Surface>
         </View>
 
-        {/* Date Navigation */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <TouchableOpacity
-            onPress={() => {
-              const newDate = new Date(selectedDate);
-              newDate.setDate(newDate.getDate() - 1);
-              setSelectedDate(newDate);
-            }}
-            style={{ padding: SPACING.sm }}
-          >
-            <Icon name="chevron-left" size={24} color="white" />
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            onPress={() => {/* Open date picker */}}
-            style={{ alignItems: 'center' }}
-          >
-            <Text style={[TEXT_STYLES.h3, { color: 'white', fontSize: 20 }]}>
-              {getMonthName(selectedDate)} {selectedDate.getDate()}
-            </Text>
-            <Text style={[TEXT_STYLES.body, { color: 'rgba(255,255,255,0.8)' }]}>
-              {getDayName(selectedDate)}
-            </Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            onPress={() => {
-              const newDate = new Date(selectedDate);
-              newDate.setDate(newDate.getDate() + 1);
-              setSelectedDate(newDate);
-            }}
-            style={{ padding: SPACING.sm }}
-          >
-            <Icon name="chevron-right" size={24} color="white" />
-          </TouchableOpacity>
-        </View>
+        {/* Search Bar */}
+        <Searchbar
+          placeholder="Search sessions, academies, sports..."
+          onChangeText={setSearchQuery}
+          value={searchQuery}
+          style={{
+            backgroundColor: 'rgba(255,255,255,0.9)',
+            elevation: 0,
+            borderRadius: 12,
+          }}
+          iconColor={COLORS.primary}
+          inputStyle={{ color: COLORS.text }}
+        />
       </LinearGradient>
     </Animated.View>
   );
 
-  const renderQuickStats = () => (
-    <Animated.View
-      entering={FadeInDown.delay(200)}
-      style={{ paddingHorizontal: SPACING.lg, marginTop: SPACING.lg }}
-    >
-      <Text style={[TEXT_STYLES.h3, { marginBottom: SPACING.md }]}>
-        Today's Overview
-      </Text>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-        <Surface style={{
-          flex: 1,
-          padding: SPACING.md,
-          borderRadius: 16,
-          marginRight: SPACING.sm,
-          elevation: 2,
-        }}>
-          <View style={{ alignItems: 'center' }}>
-            <Icon name="event" size={24} color={COLORS.primary} />
-            <Text style={[TEXT_STYLES.h2, { marginTop: SPACING.xs, color: COLORS.primary }]}>
-              3
-            </Text>
-            <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
-              Sessions
-            </Text>
-          </View>
-        </Surface>
-        
-        <Surface style={{
-          flex: 1,
-          padding: SPACING.md,
-          borderRadius: 16,
-          marginHorizontal: SPACING.xs,
-          elevation: 2,
-        }}>
-          <View style={{ alignItems: 'center' }}>
-            <Icon name="group" size={24} color={COLORS.success} />
-            <Text style={[TEXT_STYLES.h2, { marginTop: SPACING.xs, color: COLORS.success }]}>
-              12
-            </Text>
-            <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
-              Players
-            </Text>
-          </View>
-        </Surface>
-        
-        <Surface style={{
-          flex: 1,
-          padding: SPACING.md,
-          borderRadius: 16,
-          marginLeft: SPACING.sm,
-          elevation: 2,
-        }}>
-          <View style={{ alignItems: 'center' }}>
-            <Icon name="schedule" size={24} color={COLORS.warning} />
-            <Text style={[TEXT_STYLES.h2, { marginTop: SPACING.xs, color: COLORS.warning }]}>
-              4h
-            </Text>
-            <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary }]}>
-              Duration
-            </Text>
-          </View>
-        </Surface>
-      </View>
-    </Animated.View>
-  );
-
-  const renderSessionCard = ({ item, index }) => {
-    const typeConfig = getSessionTypeConfig(item.type);
+  const renderSessionCard = ({ item: session, index }) => {
+    const typeConfig = getSessionTypeConfig(session.type || 'training');
+    const isFromPlan = !session.isManual;
     
     return (
-      <Animated.View entering={FadeInRight.delay(index * 100)}>
-        <Card style={{
-          marginHorizontal: SPACING.lg,
-          marginBottom: SPACING.md,
-          borderRadius: 16,
-          elevation: 3,
-        }}>
-          <LinearGradient
-            colors={[typeConfig.color, `${typeConfig.color}90`]}
-            style={{
-              height: 4,
-              borderTopLeftRadius: 16,
-              borderTopRightRadius: 16,
-            }}
-          />
-          
-          <Card.Content style={{ padding: SPACING.md }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.xs }}>
-                  <Icon name={typeConfig.icon} size={20} color={typeConfig.color} />
-                  <Text style={[TEXT_STYLES.h4, { marginLeft: SPACING.xs, flex: 1 }]}>
-                    {item.title}
-                  </Text>
-                  <Chip
-                    mode="outlined"
-                    compact
-                    style={{ backgroundColor: `${typeConfig.color}20` }}
-                    textStyle={{ color: typeConfig.color, fontSize: 12 }}
-                  >
-                    {typeConfig.label}
-                  </Chip>
-                </View>
-                
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.xs }}>
-                  <Icon name="access-time" size={16} color={COLORS.textSecondary} />
-                  <Text style={[TEXT_STYLES.body, { marginLeft: SPACING.xs, color: COLORS.textSecondary }]}>
-                    {item.time} • {item.duration} min
-                  </Text>
-                </View>
-                
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.xs }}>
-                  <Icon name="location-on" size={16} color={COLORS.textSecondary} />
-                  <Text style={[TEXT_STYLES.body, { marginLeft: SPACING.xs, color: COLORS.textSecondary }]}>
-                    {item.location}
-                  </Text>
-                </View>
-                
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Icon name="group" size={16} color={COLORS.textSecondary} />
-                  <Text style={[TEXT_STYLES.caption, { marginLeft: SPACING.xs, color: COLORS.textSecondary }]}>
-                    {item.players.length} player{item.players.length !== 1 ? 's' : ''}
-                  </Text>
+      <Animated.View entering={FadeInRight.delay(index * 50)}>
+        <TouchableOpacity
+          onPress={() => handleSessionPress(session)}
+          activeOpacity={0.7}
+        >
+          <Card style={styles.sessionCard}>
+            {/* Header with gradient */}
+            <LinearGradient
+              colors={[typeConfig.color, `${typeConfig.color}90`]}
+              style={styles.cardHeader}
+            >
+              <View style={styles.sessionHeader}>
+                <View style={styles.sessionInfo}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                    <Text style={[TEXT_STYLES.h4, { color: 'white', flex: 1 }]}>
+                      {session.title}
+                    </Text>
+                    {isFromPlan && (
+                      <Chip
+                        compact
+                        style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}
+                        textStyle={{ color: 'white', fontSize: 10 }}
+                      >
+                        {getWeekLabel(session)}
+                      </Chip>
+                    )}
+                  </View>
+                  
+                  {/* Academy and Sport Info */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                    <Icon name="school" size={14} color="rgba(255,255,255,0.8)" />
+                    <Text style={[TEXT_STYLES.caption, { color: 'rgba(255,255,255,0.8)', marginLeft: 4 }]}>
+                      {session.academyName}
+                    </Text>
+                    {session.sport && (
+                      <>
+                        <Text style={{ color: 'rgba(255,255,255,0.6)', marginHorizontal: 8 }}>•</Text>
+                        <Text style={[TEXT_STYLES.caption, { color: 'rgba(255,255,255,0.8)' }]}>
+                          {session.sport}
+                        </Text>
+                      </>
+                    )}
+                  </View>
+
+                  {/* Time and Location */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                    <Icon name="access-time" size={14} color="rgba(255,255,255,0.8)" />
+                    <Text style={[TEXT_STYLES.caption, { color: 'rgba(255,255,255,0.8)', marginLeft: 4 }]}>
+                      {session.time} • {session.duration}min
+                    </Text>
+                    {session.location && (
+                      <>
+                        <Text style={{ color: 'rgba(255,255,255,0.6)', marginHorizontal: 8 }}>•</Text>
+                        <Icon name="location-on" size={14} color="rgba(255,255,255,0.8)" />
+                        <Text style={[TEXT_STYLES.caption, { color: 'rgba(255,255,255,0.8)', marginLeft: 2 }]}>
+                          {session.location}
+                        </Text>
+                      </>
+                    )}
+                  </View>
+
+                  {/* Age Group and Difficulty */}
+                  {(session.ageGroup || session.difficulty) && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                      {session.ageGroup && (
+                        <Chip
+                          compact
+                          style={{ backgroundColor: 'rgba(255,255,255,0.15)', marginRight: 8 }}
+                          textStyle={{ color: 'white', fontSize: 10 }}
+                        >
+                          {session.ageGroup}
+                        </Chip>
+                      )}
+                      {session.difficulty && (
+                        <Chip
+                          compact
+                          style={{ backgroundColor: getDifficultyColor(session.difficulty) + '40' }}
+                          textStyle={{ color: 'white', fontSize: 10 }}
+                        >
+                          {session.difficulty}
+                        </Chip>
+                      )}
+                    </View>
+                  )}
                 </View>
               </View>
-              
-              <View style={{ marginLeft: SPACING.md }}>
-                <IconButton
-                  icon="dots-vertical"
-                  size={20}
-                  onPress={() => {
-                    Alert.alert(
-                      'Session Options',
-                      'Choose an action',
-                      [
-                        { text: 'Edit', onPress: () => handleEditSession(item) },
-                        { text: 'Cancel', onPress: () => handleCancelSession(item.id), style: 'destructive' },
-                        { text: 'Close', style: 'cancel' }
-                      ]
-                    );
-                  }}
-                />
+            </LinearGradient>
+
+            {/* Body */}
+            <Card.Content style={styles.cardContent}>
+              {/* Participants */}
+              <View style={styles.participantsSection}>
+                <Icon name="group" size={16} color={COLORS.textSecondary} />
+                <Text style={[TEXT_STYLES.caption, { marginLeft: 4, color: COLORS.textSecondary }]}>
+                  {session.participants || 0} participants
+                </Text>
+                {session.status && (
+                  <>
+                    <Text style={{ color: COLORS.textSecondary, marginHorizontal: 8 }}>•</Text>
+                    <Chip
+                      compact
+                      mode="outlined"
+                      style={{ height: 20 }}
+                      textStyle={{ fontSize: 10 }}
+                    >
+                      {session.status.replace('_', ' ').toUpperCase()}
+                    </Chip>
+                  </>
+                )}
               </View>
-            </View>
-          </Card.Content>
-        </Card>
+
+              {/* Focus Areas */}
+              {session.focus && session.focus.length > 0 && (
+                <View style={{ marginTop: SPACING.sm }}>
+                  <Text style={[TEXT_STYLES.caption, { color: COLORS.textSecondary, marginBottom: 4 }]}>
+                    Focus Areas:
+                  </Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                    {session.focus.slice(0, 3).map((focus, idx) => (
+                      <Chip
+                        key={idx}
+                        compact
+                        mode="outlined"
+                        style={{ marginRight: 4, marginBottom: 4, height: 24 }}
+                        textStyle={{ fontSize: 10 }}
+                      >
+                        {focus}
+                      </Chip>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* Actions */}
+              <View style={styles.cardActions}>
+                <Button
+                  mode="outlined"
+                  compact
+                  onPress={() => handleEditSession(session)}
+                  style={{ marginRight: SPACING.sm }}
+                  contentStyle={{ height: 32 }}
+                >
+                  {isFromPlan ? 'View Plan' : 'Edit'}
+                </Button>
+                <Button
+                  mode="contained"
+                  compact
+                  onPress={() => handleStartSession(session)}
+                  style={{ backgroundColor: COLORS.success }}
+                  contentStyle={{ height: 32 }}
+                >
+                  Start Session
+                </Button>
+              </View>
+            </Card.Content>
+          </Card>
+        </TouchableOpacity>
       </Animated.View>
     );
   };
 
-  const renderCreateSessionModal = () => (
-    <Portal>
-      <Modal
-        visible={showCreateModal}
-        onRequestClose={() => setShowCreateModal(false)}
-        animationType="slide"
-      >
-        <BlurView intensity={95} style={{ flex: 1 }}>
-          <View style={{
-            flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.5)',
-            justifyContent: 'center',
-            padding: SPACING.lg,
-          }}>
-            <Surface style={{
-              borderRadius: 20,
-              padding: SPACING.lg,
-              maxHeight: '80%',
-            }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.lg }}>
-                <Text style={[TEXT_STYLES.h3]}>Create Session 📝</Text>
-                <IconButton
-                  icon="close"
-                  size={24}
-                  onPress={() => setShowCreateModal(false)}
-                />
-              </View>
-              
-              <ScrollView showsVerticalScrollIndicator={false}>
-                <TextInput
-                  style={{
-                    borderWidth: 1,
-                    borderColor: COLORS.border,
-                    borderRadius: 12,
-                    padding: SPACING.md,
-                    marginBottom: SPACING.md,
-                    fontSize: 16,
-                  }}
-                  placeholder="Session Title"
-                  value={newSession.title}
-                  onChangeText={(text) => setNewSession(prev => ({ ...prev, title: text }))}
-                />
-                
-                <TextInput
-                  style={{
-                    borderWidth: 1,
-                    borderColor: COLORS.border,
-                    borderRadius: 12,
-                    padding: SPACING.md,
-                    marginBottom: SPACING.md,
-                    fontSize: 16,
-                    minHeight: 80,
-                  }}
-                  placeholder="Description (optional)"
-                  multiline
-                  value={newSession.description}
-                  onChangeText={(text) => setNewSession(prev => ({ ...prev, description: text }))}
-                />
-                
-                <Text style={[TEXT_STYLES.body, { marginBottom: SPACING.sm, fontWeight: '600' }]}>
-                  Session Type
-                </Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: SPACING.lg }}>
-                  {sessionTypes.map((type) => (
-                    <TouchableOpacity
-                      key={type.id}
-                      onPress={() => setNewSession(prev => ({ ...prev, type: type.id }))}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        paddingHorizontal: SPACING.md,
-                        paddingVertical: SPACING.sm,
-                        borderRadius: 20,
-                        marginRight: SPACING.sm,
-                        marginBottom: SPACING.sm,
-                        backgroundColor: newSession.type === type.id ? type.color : `${type.color}20`,
-                      }}
-                    >
-                      <Icon
-                        name={type.icon}
-                        size={16}
-                        color={newSession.type === type.id ? 'white' : type.color}
-                      />
-                      <Text style={{
-                        marginLeft: SPACING.xs,
-                        color: newSession.type === type.id ? 'white' : type.color,
-                        fontWeight: '500',
-                      }}>
-                        {type.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                
-                <TextInput
-                  style={{
-                    borderWidth: 1,
-                    borderColor: COLORS.border,
-                    borderRadius: 12,
-                    padding: SPACING.md,
-                    marginBottom: SPACING.md,
-                    fontSize: 16,
-                  }}
-                  placeholder="Location"
-                  value={newSession.location}
-                  onChangeText={(text) => setNewSession(prev => ({ ...prev, location: text }))}
-                />
-                
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: SPACING.lg }}>
-                  <Button
-                    mode="outlined"
-                    style={{ flex: 0.48 }}
-                    onPress={() => Alert.alert('Feature Coming Soon', 'Date picker will be implemented')}
-                  >
-                    📅 Date
-                  </Button>
-                  <Button
-                    mode="outlined"
-                    style={{ flex: 0.48 }}
-                    onPress={() => Alert.alert('Feature Coming Soon', 'Time picker will be implemented')}
-                  >
-                    🕐 Time
-                  </Button>
-                </View>
-                
-                <Button
-                  mode="contained"
-                  onPress={handleCreateSession}
-                  style={{
-                    borderRadius: 12,
-                    paddingVertical: SPACING.xs,
-                  }}
-                  contentStyle={{ paddingVertical: SPACING.sm }}
-                >
-                  Create Session 🚀
-                </Button>
-              </ScrollView>
-            </Surface>
-          </View>
-        </BlurView>
-      </Modal>
-    </Portal>
-  );
+  const renderDateSections = () => {
+    const sections = Object.entries(groupedSessions).map(([date, sessions]) => ({
+      date,
+      sessions,
+      data: sessions
+    }));
 
-  return (
-    <View style={{ flex: 1, backgroundColor: COLORS.background }}>
-      {renderHeader()}
-      
-      <ScrollView
-        style={{ flex: 1 }}
+    return (
+      <FlatList
+        data={sections}
+        keyExtractor={(item) => item.date}
+        renderItem={({ item }) => (
+          <View style={styles.dateSection}>
+            <Text style={styles.dateHeader}>
+              {formatSessionDate(item.date)} ({item.sessions.length})
+            </Text>
+            <FlatList
+              data={item.sessions}
+              keyExtractor={(session) => session.id}
+              renderItem={renderSessionCard}
+              scrollEnabled={false}
+              showsVerticalScrollIndicator={false}
+            />
+          </View>
+        )}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -626,58 +636,344 @@ const SessionScheduler = ({ navigation }) => {
           />
         }
         showsVerticalScrollIndicator={false}
-      >
-        {renderQuickStats()}
-        
-        <View style={{ marginTop: SPACING.lg }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: SPACING.lg, marginBottom: SPACING.md }}>
-            <Text style={[TEXT_STYLES.h3]}>
-              Upcoming Sessions
-            </Text>
-            <TouchableOpacity
-              onPress={() => setShowFilterModal(true)}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                paddingHorizontal: SPACING.md,
-                paddingVertical: SPACING.sm,
-                borderRadius: 20,
-                backgroundColor: `${COLORS.primary}20`,
-              }}
-            >
-              <Icon name="filter-list" size={16} color={COLORS.primary} />
-              <Text style={[TEXT_STYLES.caption, { marginLeft: SPACING.xs, color: COLORS.primary }]}>
-                Filter
-              </Text>
-            </TouchableOpacity>
-          </View>
-          
-          <FlatList
-            data={upcomingSessions}
-            renderItem={renderSessionCard}
-            keyExtractor={(item) => item.id.toString()}
-            scrollEnabled={false}
-            showsVerticalScrollIndicator={false}
-          />
-        </View>
-        
-        <View style={{ height: 100 }} />
-      </ScrollView>
-      
-      <FAB
-        icon="add"
-        onPress={() => setShowCreateModal(true)}
-        style={{
-          position: 'absolute',
-          right: SPACING.lg,
-          bottom: SPACING.xl,
-          backgroundColor: COLORS.primary,
-        }}
+        contentContainerStyle={{ paddingBottom: 100 }}
       />
-      
-      {renderCreateSessionModal()}
+    );
+  };
+
+  const renderEmptyState = () => (
+    <View style={styles.emptyState}>
+      <Icon name="event-available" size={80} color={COLORS.textSecondary} />
+      <Text style={[TEXT_STYLES.h3, { color: COLORS.textSecondary, marginTop: 16 }]}>
+        No sessions scheduled
+      </Text>
+      <Text style={[TEXT_STYLES.body, { 
+        color: COLORS.textSecondary, 
+        textAlign: 'center', 
+        marginTop: 8,
+        marginHorizontal: 32 
+      }]}>
+        Upload training documents to automatically generate sessions or create manual sessions
+      </Text>
+      <Button
+        mode="contained"
+        onPress={() => navigation.navigate('DocumentLibrary')}
+        style={{ marginTop: 16 }}
+        icon="upload"
+      >
+        Upload Training Document
+      </Button>
     </View>
   );
+
+  const renderCreateSessionModal = () => (
+    <Portal>
+      <Modal
+        visible={showCreateModal}
+        onRequestClose={() => setShowCreateModal(false)}
+        animationType="slide"
+      >
+        <BlurView intensity={95} style={{ flex: 1 }}>
+          <View style={styles.modalOverlay}>
+            <Surface style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={[TEXT_STYLES.h3]}>Create Session</Text>
+                <IconButton
+                  icon="close"
+                  size={24}
+                  onPress={() => setShowCreateModal(false)}
+                />
+              </View>
+              
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Session Title"
+                  value={newSession.title}
+                  onChangeText={(text) => setNewSession(prev => ({ ...prev, title: text }))}
+                />
+                
+                <TextInput
+                  style={[styles.textInput, { minHeight: 80 }]}
+                  placeholder="Description (optional)"
+                  multiline
+                  value={newSession.description}
+                  onChangeText={(text) => setNewSession(prev => ({ ...prev, description: text }))}
+                />
+                
+                <Text style={styles.sectionLabel}>Session Type</Text>
+                <View style={styles.typeSelector}>
+                  {sessionTypes.map((type) => (
+                    <TouchableOpacity
+                      key={type.id}
+                      onPress={() => setNewSession(prev => ({ ...prev, type: type.id }))}
+                      style={[
+                        styles.typeOption,
+                        {
+                          backgroundColor: newSession.type === type.id ? type.color : `${type.color}20`,
+                        }
+                      ]}
+                    >
+                      <Icon
+                        name={type.icon}
+                        size={16}
+                        color={newSession.type === type.id ? 'white' : type.color}
+                      />
+                      <Text style={[
+                        styles.typeText,
+                        { color: newSession.type === type.id ? 'white' : type.color }
+                      ]}>
+                        {type.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Location"
+                  value={newSession.location}
+                  onChangeText={(text) => setNewSession(prev => ({ ...prev, location: text }))}
+                />
+                
+                <View style={styles.timeSection}>
+                  <Button
+                    mode="outlined"
+                    style={{ flex: 0.48 }}
+                    onPress={() => Alert.alert('Feature Coming Soon', 'Date picker will be implemented')}
+                  >
+                    Date
+                  </Button>
+                  <Button
+                    mode="outlined"
+                    style={{ flex: 0.48 }}
+                    onPress={() => Alert.alert('Feature Coming Soon', 'Time picker will be implemented')}
+                  >
+                    Time
+                  </Button>
+                </View>
+                
+                <Button
+                  mode="contained"
+                  onPress={handleCreateSession}
+                  style={styles.createButton}
+                  contentStyle={{ paddingVertical: SPACING.sm }}
+                >
+                  Create Session
+                </Button>
+              </ScrollView>
+            </Surface>
+          </View>
+        </BlurView>
+      </Modal>
+    </Portal>
+  );
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={{ marginTop: 16 }}>Loading sessions...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      {renderHeader()}
+      
+      <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
+        {filteredSessions.length === 0 ? renderEmptyState() : renderDateSections()}
+      </Animated.View>
+
+      <FAB
+        icon="add"
+        style={styles.fab}
+        onPress={() => setShowCreateModal(true)}
+        label="New Session"
+      />
+
+      {renderCreateSessionModal()}
+
+      <Portal>
+        <Snackbar
+          visible={snackbarVisible}
+          onDismiss={() => setSnackbarVisible(false)}
+          duration={3000}
+          style={{ backgroundColor: COLORS.success }}
+        >
+          <Text style={{ color: 'white' }}>{snackbarMessage}</Text>
+        </Snackbar>
+      </Portal>
+    </View>
+  );
+};
+
+const styles = {
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.background,
+  },
+  content: {
+    flex: 1,
+    padding: SPACING.md,
+  },
+  statCard: {
+    flex: 1,
+    padding: SPACING.sm,
+    borderRadius: 12,
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    marginHorizontal: 4,
+  },
+  statNumber: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: COLORS.primary,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  dateSection: {
+    marginBottom: SPACING.lg,
+  },
+  dateHeader: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: COLORS.textPrimary,
+    marginBottom: SPACING.md,
+    paddingHorizontal: SPACING.xs,
+  },
+  sessionCard: {
+    marginBottom: SPACING.md,
+    borderRadius: 16,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    overflow: 'hidden',
+  },
+  cardHeader: {
+    padding: SPACING.md,
+  },
+  sessionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  sessionInfo: {
+    flex: 1,
+  },
+  participantsSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: SPACING.sm,
+  },
+  cardContent: {
+    paddingTop: SPACING.sm,
+    paddingBottom: SPACING.md,
+  },
+  cardActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    marginTop: SPACING.md,
+    paddingTop: SPACING.sm,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.xl,
+  },
+  fab: {
+    position: 'absolute',
+    margin: 16,
+    right: 0,
+    bottom: 0,
+    backgroundColor: COLORS.primary,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.lg,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContent: {
+    width: '100%',
+    maxWidth: 400,
+    maxHeight: '90%',
+    borderRadius: 16,
+    padding: SPACING.lg,
+    backgroundColor: COLORS.surface,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SPACING.lg,
+    paddingBottom: SPACING.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  textInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: SPACING.md,
+    marginBottom: SPACING.md,
+    fontSize: 16,
+    backgroundColor: COLORS.surface,
+    color: COLORS.textPrimary,
+  },
+  sectionLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    marginBottom: SPACING.sm,
+    marginTop: SPACING.sm,
+  },
+  typeSelector: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: SPACING.md,
+  },
+  typeOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderRadius: 20,
+    margin: 4,
+    minWidth: 80,
+  },
+  typeText: {
+    marginLeft: 6,
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  timeSection: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: SPACING.lg,
+  },
+  createButton: {
+    marginTop: SPACING.lg,
+    borderRadius: 8,
+    backgroundColor: COLORS.primary,
+  },
 };
 
 export default SessionScheduler;

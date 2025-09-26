@@ -694,17 +694,27 @@ async processTrainingPlan(documentId) {
     await this.saveTrainingPlan(trainingPlan);
     
     // Mark document as processed
-  document.processed = true;
-  document.processedAt = new Date().toISOString();
-  document.linkedTrainingPlanId = trainingPlan.id; // Add reference to created plan
-  await this.updateDocumentMetadata(document);
+// Mark document as processed
+document.processed = true;
+document.processedAt = new Date().toISOString();
+document.linkedTrainingPlanId = trainingPlan.id;
+await this.updateDocumentMetadata(document);
 
-  PlatformUtils.logDebugInfo('Training plan processed successfully', { 
+// Auto-extract sessions from the training plan
+try {
+  const sessionExtractionResult = await this.extractAndStoreSessionsFromPlan(trainingPlan);
+  
+  PlatformUtils.logDebugInfo('Training plan and sessions processed successfully', { 
     planId: trainingPlan.id,
     sessionsCount: trainingPlan.sessionsCount,
-    textLength: extractedText.length,
-    documentAlreadyProcessed: false
+    extractedSessions: sessionExtractionResult.totalSessions,
+    textLength: extractedText.length
   });
+} catch (sessionError) {
+  console.warn('Session extraction failed, but plan was created:', sessionError.message);
+}
+
+//return trainingPlan;
 
   {doc.linkedTrainingPlanId && (
   <View style={styles.processedIndicator}>
@@ -717,6 +727,108 @@ async processTrainingPlan(documentId) {
   } catch (error) {
     console.error('Error processing training plan:', error);
     throw PlatformUtils.handlePlatformError(error, 'Training Plan Processing');
+  }
+}
+
+// Enhanced session extraction and storage
+async extractAndStoreSessionsFromPlan(trainingPlan) {
+  try {
+    console.log('Extracting sessions from plan:', trainingPlan.id);
+    
+    const documents = await this.getStoredDocuments();
+    const sourceDoc = documents.find(doc => doc.id === trainingPlan.sourceDocument);
+    
+    if (!sourceDoc) {
+      throw PlatformUtils.createError('Source document not found');
+    }
+    
+    // Extract sessions using SessionExtractor
+    const extractionResult = await SessionExtractor.extractSessionsFromDocument(sourceDoc, trainingPlan);
+    
+    if (!extractionResult || !extractionResult.sessions) {
+      throw PlatformUtils.createError('No sessions could be extracted from document');
+    }
+    
+    // Convert to upcoming sessions format
+    const upcomingSessions = SessionExtractor.convertToUpcomingSessions(extractionResult);
+    
+    // Store sessions with plan reference
+    const sessionsWithPlanRef = upcomingSessions.map(session => ({
+      ...session,
+      linkedPlanId: trainingPlan.id,
+      linkedPlanTitle: trainingPlan.title,
+      extractedFromDocument: true,
+      extractedAt: new Date().toISOString()
+    }));
+    
+    // Store in a separate sessions storage
+    await this.storeExtractedSessions(sessionsWithPlanRef);
+    
+    // Update plan with sessions count
+    trainingPlan.extractedSessionsCount = sessionsWithPlanRef.length;
+    trainingPlan.hasExtractedSessions = true;
+    await this.updateTrainingPlan(trainingPlan);
+    
+    PlatformUtils.logDebugInfo('Sessions extracted and stored', {
+      planId: trainingPlan.id,
+      sessionsCount: sessionsWithPlanRef.length
+    });
+    
+    return {
+      extractionResult,
+      upcomingSessions: sessionsWithPlanRef,
+      totalSessions: sessionsWithPlanRef.length
+    };
+    
+  } catch (error) {
+    console.error('Session extraction failed:', error);
+    throw PlatformUtils.handlePlatformError(error, 'Session Extraction and Storage');
+  }
+}
+
+async storeExtractedSessions(sessions) {
+  try {
+    const existingSessions = await this.getExtractedSessions();
+    const updatedSessions = [...existingSessions, ...sessions];
+    
+    await AsyncStorage.setItem('extracted_sessions', JSON.stringify(updatedSessions));
+    
+    PlatformUtils.logDebugInfo('Extracted sessions stored', {
+      newSessions: sessions.length,
+      totalSessions: updatedSessions.length
+    });
+    
+  } catch (error) {
+    throw PlatformUtils.handlePlatformError(error, 'Extracted Sessions Storage');
+  }
+}
+
+async getExtractedSessions() {
+  try {
+    const sessions = await AsyncStorage.getItem('extracted_sessions');
+    return sessions ? JSON.parse(sessions) : [];
+  } catch (error) {
+    console.error('Error loading extracted sessions:', error);
+    return [];
+  }
+}
+
+async updateTrainingPlan(updatedPlan) {
+  try {
+    const plans = await this.getTrainingPlans();
+    const index = plans.findIndex(plan => plan.id === updatedPlan.id);
+    
+    if (index !== -1) {
+      plans[index] = updatedPlan;
+      await AsyncStorage.setItem('training_plans', JSON.stringify(plans));
+      
+      PlatformUtils.logDebugInfo('Training plan updated', {
+        planId: updatedPlan.id,
+        hasExtractedSessions: updatedPlan.hasExtractedSessions
+      });
+    }
+  } catch (error) {
+    throw PlatformUtils.handlePlatformError(error, 'Training Plan Update');
   }
 }
 

@@ -811,6 +811,11 @@ const TrainingStack = () => (
       options={{ title: 'Upload Coaching Plan' }} 
     />
     <Stack.Screen 
+      name="SessionBuilder" 
+      component={SessionBuilder}
+      options={{ title: 'Session Builder' }} 
+    />
+    <Stack.Screen 
       name="DocumentLibrary" 
       component={DocumentLibrary} 
       options={{ title: 'Document Library' }} 
@@ -847,11 +852,6 @@ const TrainingStack = () => (
           headerShown: false // The component has its own header
         }} 
       />
-    <Stack.Screen 
-      name="SessionBuilder" 
-      component={SessionBuilder} 
-      options={{ title: 'Session Builder' }} 
-    />
     <Stack.Screen 
       name="SessionTemplates" 
       component={SessionTemplates}
