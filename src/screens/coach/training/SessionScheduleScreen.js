@@ -38,6 +38,7 @@ import { TEXT_STYLES } from '../../styles/textStyles';
 
 const { width: screenWidth } = Dimensions.get('window');
 
+
 const SessionScheduleScreen = ({ navigation, route }) => {
   // Define fallback constants at the top
   const COLORS_FALLBACK = {
@@ -319,6 +320,20 @@ const SessionScheduleScreen = ({ navigation, route }) => {
   const [sessionProgress, setSessionProgress] = useState(0);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
+  // Add real-time AI coaching
+const [realtimeCoaching, setRealtimeCoaching] = useState(null);
+
+const getRealtimeAdvice = async () => {
+  const context = {
+    currentDrill: currentDrill?.name,
+    playerCount: session.participants,
+    timeElapsed: sessionDuration,
+    issues: observedIssues
+  };
+  
+  const advice = await AIService.getRealtimeCoachingTips(context);
+  setRealtimeCoaching(advice);
+};
 
   const tabs = [
     { key: 'overview', label: 'Overview', icon: 'info' },

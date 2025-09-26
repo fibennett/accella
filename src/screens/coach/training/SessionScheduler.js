@@ -85,6 +85,7 @@ const SessionScheduler = ({ navigation }) => {
   const [selectedFilters, setSelectedFilters] = useState([]);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [aiRecommendations, setAiRecommendations] = useState([]);
 
   // Session data
   const [extractedSessions, setExtractedSessions] = useState([]);
@@ -245,6 +246,13 @@ const SessionScheduler = ({ navigation }) => {
       ].sort((a, b) => new Date(a.date) - new Date(b.date));
 
       setAllSessions(combinedSessions);
+
+      // In initializeSessionData()
+      const recommendations = await AIService.getSessionRecommendations(
+        allExtractedSessions,
+        userProfile
+      );
+      setAiRecommendations(recommendations);
 
     } catch (error) {
       console.error('Error initializing session data:', error);
