@@ -25,7 +25,7 @@ class SessionExtractor {
     };
   }
 
-  // Main extraction method
+// Main extraction method
 async extractSessionsFromDocument(document, trainingPlan) {
   try {
     PlatformUtils.logDebugInfo('Starting AI-enhanced session extraction', {
@@ -43,21 +43,33 @@ async extractSessionsFromDocument(document, trainingPlan) {
     const sessions = this.extractWeeklySessions(text, documentStructure, academyInfo);
     
     // NEW: AI Enhancement with smarter scheduling
-    const enhancedSessions = await AIService.enhanceExtractedSessions(sessions, {
-      ageGroup: academyInfo.ageGroup,
-      sport: academyInfo.sport,
-      experience: trainingPlan.difficulty || 'beginner'
-    });
+    let enhancedSessions = sessions;
+    try {
+      enhancedSessions = await AIService.enhanceExtractedSessions(sessions, {
+        ageGroup: academyInfo.ageGroup,
+        sport: academyInfo.sport,
+        experience: trainingPlan.difficulty || 'beginner'
+      });
+      console.log('Sessions enhanced with AI successfully');
+    } catch (error) {
+      console.warn('AI enhancement failed, using basic sessions:', error);
+    }
 
     // NEW: Generate optimal schedule for sessions
-    const schedulePreferences = {
-      availableDays: ['monday', 'wednesday', 'friday'],
-      preferredTime: '16:00', // Good for youth training
-      sessionDuration: 90,
-      intensity: trainingPlan.difficulty || 'moderate'
-    };
-    
-    const optimizedSchedule = await AIService.generateOptimalSchedule(trainingPlan, schedulePreferences);
+    let optimizedSchedule = null;
+    try {
+      const schedulePreferences = {
+        availableDays: ['monday', 'wednesday', 'friday'],
+        preferredTime: '16:00',
+        sessionDuration: 90,
+        intensity: trainingPlan.difficulty || 'moderate'
+      };
+      
+      optimizedSchedule = await AIService.generateOptimalSchedule(trainingPlan, schedulePreferences);
+      console.log('Optimal schedule generated with AI');
+    } catch (error) {
+      console.warn('Schedule generation failed:', error);
+    }
 
     const result = {
       academyInfo,
@@ -68,15 +80,15 @@ async extractSessionsFromDocument(document, trainingPlan) {
       extractedAt: new Date().toISOString(),
       sourceDocument: document.id,
       sourcePlan: trainingPlan.id,
-      aiEnhanced: true,
-      aiScheduled: true // NEW: Flag for AI scheduling
+      aiEnhanced: enhancedSessions !== sessions, // Only true if AI enhancement worked
+      aiScheduled: !!optimizedSchedule // Only true if schedule was generated
     };
 
     PlatformUtils.logDebugInfo('AI-enhanced session extraction completed', {
       totalWeeks: result.totalWeeks,
       totalSessions: result.totalSessions,
-      aiEnhanced: true,
-      aiScheduled: true
+      aiEnhanced: result.aiEnhanced,
+      aiScheduled: result.aiScheduled
     });
 
     return result;

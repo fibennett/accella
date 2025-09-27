@@ -14,17 +14,15 @@ class AIService {
     this.requestQueue = [];
     this.isProcessingQueue = false;
     
-    // Enhanced model configurations for sports training
     this.models = {
-      textGeneration: 'google/flan-t5-base', // Primary for training plans
-      planGeneration: 'google/flan-t5-large', // For complex plan generation
-      sessionAnalysis: 'microsoft/DialoGPT-medium', // For real-time coaching
-      summarization: 'facebook/bart-large-cnn', // For document summarization
-      questionAnswering: 'deepset/roberta-base-squad2', // For training Q&A
-      sentiment: 'cardiffnlp/twitter-roberta-base-sentiment-latest' // For feedback analysis
+      textGeneration: 'google/flan-t5-base',
+      planGeneration: 'google/flan-t5-large',
+      sessionAnalysis: 'microsoft/DialoGPT-medium',
+      summarization: 'facebook/bart-large-cnn',
+      questionAnswering: 'deepset/roberta-base-squad2',
+      sentiment: 'cardiffnlp/twitter-roberta-base-sentiment-latest'
     };
     
-    // Sports-specific knowledge base
     this.sportsKnowledge = {
       soccer: {
         keySkills: ['ball control', 'passing', 'shooting', 'defending', 'dribbling'],
@@ -50,7 +48,6 @@ class AIService {
         equipment: ['basketballs', 'cones', 'hoops', 'ladders'],
         safetyConsiderations: ['ankle support', 'proper footwork', 'collision awareness']
       }
-      // Add more sports as needed
     };
     
     this.offlineCapabilities = {
@@ -61,15 +58,13 @@ class AIService {
       basicCoaching: true
     };
 
-    // Initialize immediately
     this.initialize();
   }
 
   async initialize() {
     try {
-      console.log('AIService: Starting comprehensive initialization...');
+      console.log('AIService: Starting initialization...');
       
-      // Load stored API key and settings
       await this.loadStoredSettings();
       
       if (this.apiKey) {
@@ -77,15 +72,13 @@ class AIService {
         console.log('AIService: Hugging Face client initialized');
         await this.validateConnection();
       } else {
-        console.log('AIService: No API key found, running in intelligent fallback mode');
+        console.log('AIService: No API key found, running in fallback mode');
         this.fallbackMode = true;
       }
       
-      // Initialize request queue processor
       this.startQueueProcessor();
-      
       this.initialized = true;
-      console.log('AIService: Comprehensive initialization complete');
+      console.log('AIService: Initialization complete');
       
       return {
         success: true,
@@ -142,11 +135,11 @@ class AIService {
 
   async validateConnection() {
     try {
-      console.log('AIService: Validating Hugging Face connection...');
+      console.log('AIService: Validating connection...');
       
       const response = await this.hfInference.textGeneration({
         model: this.models.textGeneration,
-        inputs: 'Test connection for sports coaching AI',
+        inputs: 'Test connection',
         parameters: {
           max_length: 20,
           temperature: 0.1
@@ -156,9 +149,8 @@ class AIService {
       if (response && response.generated_text) {
         this.isOnline = true;
         this.fallbackMode = false;
-        console.log('AIService: Hugging Face connection validated successfully');
+        console.log('AIService: Connection validated');
         
-        // Update usage stats
         this.usageStats.successfulRequests++;
         await this.saveSettings();
         
@@ -189,7 +181,583 @@ class AIService {
     }
   }
 
-  // ============= ENHANCED SESSION PROCESSING =============
+  // Add this method to your AIService class (in AIService.js)
+
+// ============= OPTIMAL SCHEDULE GENERATION =============
+
+async generateOptimalSchedule(trainingPlan, preferences = {}) {
+  if (!this.initialized) {
+    await this.initialize();
+  }
+
+  try {
+    console.log('AIService: Generating optimal schedule...');
+    
+    if (this.isOnline && !this.fallbackMode) {
+      return await this.generateScheduleWithAI(trainingPlan, preferences);
+    } else {
+      return await this.generateScheduleWithFallback(trainingPlan, preferences);
+    }
+  } catch (error) {
+    console.error('AIService: Schedule generation failed:', error);
+    return await this.generateScheduleWithFallback(trainingPlan, preferences);
+  }
+}
+
+async generateScheduleWithAI(trainingPlan, preferences) {
+  try {
+    const prompt = this.createSchedulePrompt(trainingPlan, preferences);
+    
+    const response = await this.queueRequest({
+      model: this.models.planGeneration,
+      inputs: prompt,
+      parameters: {
+        max_length: 300,
+        temperature: 0.6,
+        do_sample: true,
+        top_p: 0.8
+      }
+    });
+
+    const schedule = this.parseScheduleResponse(response.generated_text, trainingPlan, preferences);
+    
+    return {
+      ...schedule,
+      aiGenerated: true,
+      aiProvider: 'huggingface',
+      confidence: this.calculateConfidence(response.generated_text)
+    };
+
+  } catch (error) {
+    console.warn('AI schedule generation failed, using fallback:', error);
+    return await this.generateScheduleWithFallback(trainingPlan, preferences);
+  }
+}
+
+async generateScheduleWithFallback(trainingPlan, preferences = {}) {
+  console.log('AIService: Using fallback schedule generation');
+  
+  const defaultPreferences = {
+    availableDays: ['monday', 'wednesday', 'friday'],
+    preferredTime: '16:00',
+    sessionDuration: 90,
+    intensity: 'moderate',
+    weeksCount: 12,
+    sessionsPerWeek: 3
+  };
+
+  const prefs = { ...defaultPreferences, ...preferences };
+  const schedule = this.createOptimalSessionSchedule(trainingPlan, prefs);
+  
+  return {
+    planId: trainingPlan.id,
+    planTitle: trainingPlan.title,
+    sessions: schedule,
+    totalSessions: schedule.length,
+    totalWeeks: prefs.weeksCount,
+    generatedAt: new Date().toISOString(),
+    preferences: prefs,
+    aiGenerated: true,
+    aiProvider: 'intelligent_fallback',
+    confidence: 0.85,
+    scheduleType: 'optimized_progression'
+  };
+}
+
+createSchedulePrompt(trainingPlan, preferences) {
+  const sport = trainingPlan.category || 'general fitness';
+  const duration = preferences.sessionDuration || 90;
+  const days = preferences.availableDays || ['monday', 'wednesday', 'friday'];
+  
+  return `Create an optimal training schedule for a ${sport} program:
+
+PROGRAM DETAILS:
+- Title: ${trainingPlan.title}
+- Duration: ${trainingPlan.duration || '12 weeks'}
+- Difficulty: ${trainingPlan.difficulty || 'intermediate'}
+- Sessions per week: ${days.length}
+
+PREFERENCES:
+- Available days: ${days.join(', ')}
+- Session duration: ${duration} minutes
+- Intensity: ${preferences.intensity || 'moderate'}
+
+Provide a structured weekly schedule with:
+1. Progressive intensity
+2. Proper recovery periods
+3. Skill development phases
+4. Performance peaks
+
+Focus on sustainable long-term development.`;
+}
+
+parseScheduleResponse(response, trainingPlan, preferences) {
+  // Parse AI response and create schedule structure
+  const lines = response.split('\n').filter(line => line.trim());
+  const sessions = [];
+  
+  // If AI response parsing fails, fall back to structured generation
+  if (lines.length < 5) {
+    return this.createOptimalSessionSchedule(trainingPlan, preferences);
+  }
+  
+  // Try to extract schedule information from AI response
+  let currentWeek = 1;
+  let sessionId = 1;
+  
+  lines.forEach(line => {
+    const weekMatch = line.match(/week\s*(\d+)/i);
+    if (weekMatch) {
+      currentWeek = parseInt(weekMatch[1]);
+    }
+    
+    // Look for day and time information
+    const dayMatch = line.match(/(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i);
+    const timeMatch = line.match(/(\d{1,2}):(\d{2})/);
+    
+    if (dayMatch && currentWeek <= 12) {
+      sessions.push({
+        id: `optimal_${sessionId++}_${Date.now()}`,
+        week: currentWeek,
+        day: dayMatch[1].toLowerCase(),
+        date: this.calculateOptimalDate(currentWeek, dayMatch[1]),
+        time: timeMatch ? timeMatch[0] : preferences.preferredTime || '16:00',
+        duration: preferences.sessionDuration || 90,
+        type: this.getSessionType(currentWeek, sessions.length % 3),
+        intensity: this.calculateProgressiveIntensity(currentWeek, preferences.intensity),
+        focus: this.getWeeklyFocus(currentWeek, trainingPlan.category),
+        aiSuggested: true
+      });
+    }
+  });
+  
+  // If no sessions extracted from AI, use fallback generation
+  if (sessions.length === 0) {
+    return this.createOptimalSessionSchedule(trainingPlan, preferences);
+  }
+  
+  return sessions;
+}
+
+createOptimalSessionSchedule(trainingPlan, preferences) {
+  const sessions = [];
+  const { availableDays, preferredTime, sessionDuration, weeksCount = 12 } = preferences;
+  
+  for (let week = 1; week <= weeksCount; week++) {
+    availableDays.forEach((day, dayIndex) => {
+      const sessionDate = this.calculateOptimalDate(week, day);
+      
+      sessions.push({
+        id: `optimal_${week}_${dayIndex}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        week: week,
+        day: day.toLowerCase(),
+        date: sessionDate,
+        time: preferredTime,
+        duration: sessionDuration,
+        type: this.getSessionType(week, dayIndex),
+        intensity: this.calculateProgressiveIntensity(week, preferences.intensity),
+        focus: this.getWeeklyFocus(week, trainingPlan.category),
+        phase: this.getTrainingPhase(week, weeksCount),
+        objectives: this.getWeeklyObjectives(week, trainingPlan.category),
+        equipment: this.getSessionEquipment(trainingPlan.category),
+        aiOptimized: true
+      });
+    });
+  }
+  
+  return sessions;
+}
+
+calculateOptimalDate(weekNumber, dayName) {
+  const today = new Date();
+  const dayIndex = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+    .indexOf(dayName.toLowerCase());
+  
+  // Start from next Monday if today is weekend, otherwise start from today
+  const startDate = new Date(today);
+  const currentDay = startDate.getDay();
+  
+  if (currentDay === 0 || currentDay === 6) { // Sunday or Saturday
+    const daysUntilMonday = currentDay === 0 ? 1 : 2;
+    startDate.setDate(startDate.getDate() + daysUntilMonday);
+  }
+  
+  // Calculate target date for this week and day
+  const targetDate = new Date(startDate);
+  targetDate.setDate(startDate.getDate() + (weekNumber - 1) * 7);
+  
+  // Adjust to correct day of week
+  const targetDay = targetDate.getDay();
+  const daysToAdd = (dayIndex - targetDay + 7) % 7;
+  targetDate.setDate(targetDate.getDate() + daysToAdd);
+  
+  return targetDate.toISOString().split('T')[0];
+}
+
+getSessionType(week, dayIndex) {
+  const types = ['technique', 'conditioning', 'tactical', 'strength', 'recovery'];
+  
+  // Progressive session type selection based on week
+  if (week <= 4) {
+    return ['technique', 'conditioning', 'technique'][dayIndex % 3];
+  } else if (week <= 8) {
+    return ['tactical', 'strength', 'technique'][dayIndex % 3];
+  } else {
+    return ['tactical', 'conditioning', 'strength'][dayIndex % 3];
+  }
+}
+
+calculateProgressiveIntensity(week, baseIntensity) {
+  const intensityMap = { 
+    low: 0.5, 
+    moderate: 0.7, 
+    high: 0.85,
+    very_high: 0.95 
+  };
+  
+  const baseLevel = intensityMap[baseIntensity] || 0.7;
+  
+  // Progressive intensity with periodization
+  let weeklyMultiplier;
+  if (week <= 3) {
+    weeklyMultiplier = 0.7 + (week * 0.1); // Build-up phase
+  } else if (week <= 8) {
+    weeklyMultiplier = 0.9 + (week * 0.02); // Development phase
+  } else if (week <= 10) {
+    weeklyMultiplier = 1.0; // Peak phase
+  } else {
+    weeklyMultiplier = 0.8; // Recovery phase
+  }
+  
+  const finalIntensity = Math.min(baseLevel * weeklyMultiplier, 1.0);
+  return Math.round(finalIntensity * 100);
+}
+
+getWeeklyFocus(week, sport) {
+  const sportFocus = {
+    soccer: {
+      1: ['ball control', 'basic passing'],
+      2: ['dribbling', 'first touch'],
+      3: ['shooting', 'finishing'],
+      4: ['defending', 'tackling'],
+      5: ['tactical awareness', 'positioning'],
+      6: ['crossing', 'heading'],
+      7: ['set pieces', 'free kicks'],
+      8: ['match simulation', 'decision making'],
+      9: ['advanced tactics', 'team play'],
+      10: ['peak performance', 'competition prep'],
+      11: ['match readiness', 'strategy'],
+      12: ['performance review', 'next level prep']
+    },
+    basketball: {
+      1: ['dribbling basics', 'ball handling'],
+      2: ['shooting form', 'free throws'],
+      3: ['passing', 'court vision'],
+      4: ['defense', 'positioning'],
+      5: ['rebounding', 'boxing out'],
+      6: ['offensive plays', 'screens'],
+      7: ['fast break', 'transition'],
+      8: ['half court offense', 'spacing'],
+      9: ['defensive systems', 'help defense'],
+      10: ['game situations', 'clutch performance'],
+      11: ['team chemistry', 'execution'],
+      12: ['championship prep', 'mental toughness']
+    },
+    fitness: {
+      1: ['foundation building', 'form'],
+      2: ['strength development', 'endurance'],
+      3: ['cardiovascular fitness', 'stamina'],
+      4: ['flexibility', 'mobility'],
+      5: ['power development', 'explosiveness'],
+      6: ['functional movement', 'stability'],
+      7: ['high intensity training', 'intervals'],
+      8: ['compound movements', 'strength'],
+      9: ['sport specific', 'performance'],
+      10: ['peak conditioning', 'testing'],
+      11: ['competition prep', 'tapering'],
+      12: ['maintenance', 'recovery']
+    }
+  };
+  
+  const focuses = sportFocus[sport] || sportFocus.fitness;
+  return focuses[week] || ['general training', 'skill development'];
+}
+
+getTrainingPhase(week, totalWeeks) {
+  const phaseLength = Math.floor(totalWeeks / 4);
+  
+  if (week <= phaseLength) return 'foundation';
+  if (week <= phaseLength * 2) return 'development';
+  if (week <= phaseLength * 3) return 'intensification';
+  return 'peaking';
+}
+
+getWeeklyObjectives(week, sport) {
+  const baseObjectives = {
+    1: ['Establish baseline fitness', 'Learn fundamental movements'],
+    2: ['Improve basic skills', 'Build endurance base'],
+    3: ['Develop coordination', 'Increase strength'],
+    4: ['Master basic techniques', 'Assess progress'],
+    5: ['Introduce advanced skills', 'Build power'],
+    6: ['Combine skills in drills', 'Improve speed'],
+    7: ['Practice under pressure', 'Peak strength phase'],
+    8: ['Tactical understanding', 'Maintain fitness'],
+    9: ['Advanced tactical play', 'Fine-tune skills'],
+    10: ['Peak performance', 'Competition simulation'],
+    11: ['Mental preparation', 'Strategy execution'],
+    12: ['Performance evaluation', 'Set future goals']
+  };
+  
+  return baseObjectives[week] || ['Skill development', 'Fitness maintenance'];
+}
+
+getSessionEquipment(sport) {
+  const equipment = {
+    soccer: ['soccer balls', 'cones', 'goals', 'bibs'],
+    basketball: ['basketballs', 'hoops', 'cones', 'agility ladder'],
+    fitness: ['dumbbells', 'resistance bands', 'mats', 'cones'],
+    tennis: ['tennis balls', 'rackets', 'cones', 'net'],
+    general: ['basic equipment', 'cones', 'markers', 'balls']
+  };
+  
+  return equipment[sport] || equipment.general;
+}
+
+// 2. Add this method to AIService.js to support single session improvement
+
+async improveSingleSession(sessionData, userProfile = {}) {
+  if (!this.initialized) {
+    await this.initialize();
+  }
+
+  try {
+    console.log('AIService: Improving single session with AI');
+    
+    if (this.isOnline && !this.fallbackMode) {
+      return await this.improveSingleSessionWithHuggingFace(sessionData, userProfile);
+    } else {
+      return await this.improveSingleSessionWithFallback(sessionData, userProfile);
+    }
+  } catch (error) {
+    console.error('AIService: Single session improvement error:', error);
+    return await this.improveSingleSessionWithFallback(sessionData, userProfile);
+  }
+}
+
+// Add these missing helper methods to your AIService class
+
+generateSportSpecificDrills(sport, ageGroup, duration) {
+  const baseDrills = {
+    soccer: [
+      'Ball control and first touch practice',
+      'Passing accuracy in pairs',
+      'Dribbling through cones',
+      'Shooting technique from various angles',
+      'Defensive positioning and tackling'
+    ],
+    basketball: [
+      'Dribbling with both hands',
+      'Chest and bounce passing',
+      'Free throw shooting technique',
+      'Layup from both sides',
+      'Defensive stance and movement'
+    ],
+    general: [
+      'Agility ladder exercises',
+      'Coordination drills with equipment',
+      'Team-building activities',
+      'Fitness stations rotation',
+      'Stretching and mobility work'
+    ]
+  };
+
+  const drills = baseDrills[sport] || baseDrills.general;
+  const drillDuration = Math.round(duration * 0.1); // Each drill ~10% of session
+
+  return drills.map((drill, index) => ({
+    id: `drill_${index}`,
+    name: drill,
+    duration: drillDuration,
+    description: `${drill} - adapted for ${ageGroup} level`,
+    equipment: this.getBasicEquipment(sport),
+    instructions: `Focus on proper technique and safety`
+  }));
+}
+
+getBasicEquipment(sport) {
+  const equipment = {
+    soccer: ['soccer balls', 'cones', 'goals'],
+    basketball: ['basketballs', 'hoops', 'cones'],
+    general: ['cones', 'markers', 'basic equipment']
+  };
+  return equipment[sport] || equipment.general;
+}
+
+// Also add this method if it's missing:
+async improveSingleSessionWithHuggingFace(sessionData, userProfile) {
+  try {
+    const prompt = `As an expert sports coach, enhance this training session:
+
+SESSION DETAILS:
+Title: ${sessionData.title}
+Duration: ${sessionData.duration} minutes
+Sport: ${sessionData.sport || 'General'}
+Age Group: ${sessionData.ageGroup || 'Youth'}
+Participants: ${sessionData.participants || 15}
+
+CURRENT CONTENT:
+${sessionData.rawContent || sessionData.documentContent || 'Basic training session'}
+
+FOCUS AREAS: ${sessionData.focus?.join(', ') || 'General fitness'}
+
+Please provide:
+1. Enhanced session structure
+2. Specific drill improvements
+3. Safety considerations
+4. Progression tips
+5. Equipment alternatives
+
+Make it actionable and age-appropriate.`;
+
+    const response = await this.queueRequest({
+      model: this.models.textGeneration,
+      inputs: prompt,
+      parameters: {
+        max_length: 400,
+        temperature: 0.7,
+        do_sample: true,
+        top_p: 0.9
+      }
+    });
+
+    const enhancements = this.parseSessionImprovements(response.generated_text);
+    
+    return {
+      originalSession: sessionData,
+      enhancedSession: {
+        ...sessionData,
+        title: sessionData.title + ' (AI Enhanced)',
+        description: enhancements.description || sessionData.description,
+        structure: enhancements.structure || [],
+        drills: enhancements.drills || sessionData.drills || [],
+        safety: enhancements.safety || [],
+        progression: enhancements.progression || [],
+        equipment: enhancements.equipment || sessionData.equipment || [],
+        coachingTips: enhancements.coachingTips || [],
+        aiEnhanced: true,
+        enhancedAt: new Date().toISOString()
+      },
+      improvements: enhancements.improvements || [],
+      confidence: this.calculateConfidence(response.generated_text)
+    };
+
+  } catch (error) {
+    throw error;
+  }
+}
+
+parseSessionImprovements(response) {
+  const improvements = {
+    description: '',
+    structure: [],
+    drills: [],
+    safety: [],
+    progression: [],
+    equipment: [],
+    coachingTips: [],
+    improvements: []
+  };
+
+  const lines = response.split('\n').filter(line => line.trim());
+  let currentSection = null;
+
+  lines.forEach(line => {
+    const cleanLine = line.trim();
+    
+    if (cleanLine.toLowerCase().includes('structure')) {
+      currentSection = 'structure';
+    } else if (cleanLine.toLowerCase().includes('drill') || cleanLine.toLowerCase().includes('exercise')) {
+      currentSection = 'drills';
+    } else if (cleanLine.toLowerCase().includes('safety')) {
+      currentSection = 'safety';
+    } else if (cleanLine.toLowerCase().includes('progression') || cleanLine.toLowerCase().includes('advance')) {
+      currentSection = 'progression';
+    } else if (cleanLine.toLowerCase().includes('equipment')) {
+      currentSection = 'equipment';
+    } else if (cleanLine.toLowerCase().includes('tip') || cleanLine.toLowerCase().includes('coach')) {
+      currentSection = 'coachingTips';
+    } else if (currentSection && cleanLine.length > 10) {
+      improvements[currentSection].push(cleanLine);
+    }
+  });
+
+  return improvements;
+}
+
+async improveSingleSessionWithFallback(sessionData, userProfile) {
+  console.log('AIService: Using fallback session improvement');
+  
+  const sport = sessionData.sport?.toLowerCase() || 'general';
+  const ageGroup = sessionData.ageGroup || 'Youth';
+  const duration = sessionData.duration || 90;
+  
+  const improvements = {
+    structure: [
+      `Warm-up (${Math.round(duration * 0.15)} min): Dynamic stretching and activation`,
+      `Technical Skills (${Math.round(duration * 0.35)} min): ${sport}-specific skill development`,
+      `Tactical Work (${Math.round(duration * 0.25)} min): Game situations and decision making`,
+      `Conditioning (${Math.round(duration * 0.15)} min): Fitness and endurance work`,
+      `Cool-down (${Math.round(duration * 0.10)} min): Recovery and flexibility`
+    ],
+    drills: this.generateSportSpecificDrills(sport, ageGroup, duration),
+    safety: [
+      'Ensure proper warm-up before intense activities',
+      'Monitor hydration throughout the session',
+      'Check all equipment before use',
+      'Maintain appropriate work-to-rest ratios',
+      'Watch for signs of fatigue and adjust intensity'
+    ],
+    progression: [
+      'Start with basic movements, progress to complex skills',
+      'Gradually increase intensity throughout the session',
+      'Provide modifications for different skill levels',
+      'Focus on quality over quantity of repetitions'
+    ],
+    coachingTips: [
+      'Use positive reinforcement to maintain motivation',
+      'Demonstrate proper technique before each drill',
+      'Encourage peer learning and team support',
+      'Focus on effort and improvement, not just outcomes',
+      'Provide specific, actionable feedback'
+    ]
+  };
+
+  return {
+    originalSession: sessionData,
+    enhancedSession: {
+      ...sessionData,
+      title: sessionData.title + ' (AI Enhanced)',
+      structure: improvements.structure,
+      drills: improvements.drills,
+      safety: improvements.safety,
+      progression: improvements.progression,
+      coachingTips: improvements.coachingTips,
+      aiEnhanced: true,
+      enhancementMethod: 'intelligent_fallback',
+      enhancedAt: new Date().toISOString()
+    },
+    improvements: [
+      'Added structured session timeline',
+      'Included sport-specific drill recommendations',
+      'Enhanced safety considerations',
+      'Provided progression guidelines',
+      'Added coaching tips for better engagement'
+    ],
+    confidence: 0.85
+  };
+}
+
+  // ============= SESSION ENHANCEMENT =============
 
   async enhanceExtractedSessions(sessions, userProfile = {}) {
     if (!this.initialized) {
@@ -197,7 +765,7 @@ class AIService {
     }
 
     try {
-      console.log('AIService: Enhancing sessions with advanced AI processing');
+      console.log('AIService: Enhancing sessions');
       
       if (this.isOnline && !this.fallbackMode) {
         return await this.enhanceWithHuggingFace(sessions, userProfile);
@@ -212,20 +780,18 @@ class AIService {
   }
 
   async enhanceWithHuggingFace(sessions, userProfile) {
-    console.log('AIService: Using Hugging Face for session enhancement');
+    console.log('AIService: Using Hugging Face for enhancement');
     
     const enhancedSessions = [];
-    const batchSize = 3; // Process in batches to avoid rate limits
+    const batchSize = 3;
     
     for (let i = 0; i < sessions.length; i += batchSize) {
       const batch = sessions.slice(i, i + batchSize);
-      const batchPromises = batch.map(async (weekSession, index) => {
+      const batchPromises = batch.map(async (weekSession) => {
         
         try {
-          // Create comprehensive prompt for this session
           const prompt = this.createAdvancedTrainingPrompt(weekSession, userProfile);
           
-          // Queue the request to manage rate limits
           const aiResponse = await this.queueRequest({
             model: this.models.textGeneration,
             inputs: prompt,
@@ -262,7 +828,6 @@ class AIService {
       const batchResults = await Promise.all(batchPromises);
       enhancedSessions.push(...batchResults);
       
-      // Add delay between batches to respect rate limits
       if (i + batchSize < sessions.length) {
         await this.delay(1000);
       }
@@ -286,24 +851,21 @@ CURRENT SESSION:
 Week ${weekSession.weekNumber}: ${weekSession.title}
 Duration: ${weekSession.totalDuration} minutes
 Focus Areas: ${weekSession.focus?.join(', ') || 'General training'}
-Current Drills: ${weekSession.dailySessions?.length || 0} planned activities
 
 PLAYER CONTEXT:
 - Age Group: ${ageGroup}
 - Experience: ${experience}
 - Sport: ${sport}
-- Key Skills to Develop: ${sportsData.keySkills.join(', ')}
+- Key Skills: ${sportsData.keySkills.join(', ')}
 
 PROVIDE ENHANCEMENTS FOR:
-1. Age-Appropriate Modifications: Adjust complexity and duration for ${ageGroup}
-2. Progressive Skill Development: Build on previous weeks' learning
-3. Safety Considerations: Injury prevention and safe practice methods  
-4. Engagement Techniques: Keep players motivated and focused
-5. Assessment Methods: How to measure progress and success
-6. Equipment Optimization: Best use of available training equipment
-7. Individual Adaptations: Modifications for different skill levels
+1. Age-Appropriate Modifications
+2. Progressive Skill Development
+3. Safety Considerations
+4. Engagement Techniques
+5. Assessment Methods
 
-Format your response with clear sections for each enhancement area. Be specific and actionable.`;
+Be specific and actionable.`;
   }
 
   parseTrainingResponse(response) {
@@ -359,7 +921,6 @@ Format your response with clear sections for each enhancement area. Be specific 
       enhancedAt: new Date().toISOString()
     };
 
-    // Apply age-appropriate duration adjustments
     if (aiEnhancements.ageModifications?.length > 0) {
       const ageGroup = userProfile.ageGroup || 'youth';
       const sport = userProfile.sport || 'soccer';
@@ -373,17 +934,14 @@ Format your response with clear sections for each enhancement area. Be specific 
       }
     }
 
-    // Add safety modifications to notes
     if (aiEnhancements.safetyTips?.length > 0) {
       enhanced.safetyNotes = aiEnhancements.safetyTips.join('. ');
     }
 
-    // Add engagement techniques
     if (aiEnhancements.engagementTechniques?.length > 0) {
       enhanced.engagementTips = aiEnhancements.engagementTechniques;
     }
 
-    // Add assessment methods
     if (aiEnhancements.assessmentMethods?.length > 0) {
       enhanced.assessmentCriteria = aiEnhancements.assessmentMethods;
     }
@@ -391,136 +949,10 @@ Format your response with clear sections for each enhancement area. Be specific 
     return enhanced;
   }
 
-  // ============= INTELLIGENT SCHEDULING =============
-
- async generateOptimalSchedule(trainingPlan, userPreferences = {}) {
-  if (!this.initialized) {
-    await this.initialize();
-  }
-
-  try {
-    if (this.isOnline && !this.fallbackMode) {
-      return await this.generateScheduleWithAI(trainingPlan, userPreferences);
-    } else {
-      // CHANGE THIS:
-      return await this.generateScheduleFromPlan(trainingPlan, userPreferences);
-    }
-  } catch (error) {
-    console.error('AI scheduling error:', error);
-    // CHANGE THIS TOO:
-    return this.generateScheduleFromPlan(trainingPlan, userPreferences);
-  }
-}
-
-  async generateScheduleWithAI(trainingPlan, userPreferences) {
-    const prompt = `Create an optimal training schedule for this plan:
-
-TRAINING PLAN:
-Title: ${trainingPlan.title}
-Duration: ${trainingPlan.duration}
-Sessions: ${trainingPlan.sessionsCount}
-Difficulty: ${trainingPlan.difficulty}
-Sport: ${trainingPlan.category}
-
-USER PREFERENCES:
-Available Days: ${userPreferences.availableDays?.join(', ') || 'Monday, Wednesday, Friday'}
-Preferred Time: ${userPreferences.preferredTime || '18:00'}
-Session Duration: ${userPreferences.sessionDuration || 60} minutes
-Rest Days Required: ${userPreferences.restDays || 1} day(s) between sessions
-Intensity Preference: ${userPreferences.intensity || 'moderate'}
-
-REQUIREMENTS:
-- Ensure adequate recovery time between intense sessions
-- Progress intensity gradually over time
-- Consider age-appropriate training loads
-- Include variety in training types
-- Account for seasonal considerations
-
-Provide a detailed weekly schedule with specific recommendations for:
-1. Session distribution across weeks
-2. Intensity progression
-3. Recovery periods
-4. Performance milestones
-5. Adaptation checkpoints`;
-
-    try {
-      const response = await this.queueRequest({
-        model: this.models.planGeneration,
-        inputs: prompt,
-        parameters: {
-          max_length: 400,
-          temperature: 0.8,
-          repetition_penalty: 1.2
-        }
-      });
-
-      return this.parseScheduleResponse(response.generated_text, trainingPlan, userPreferences);
-    } catch (error) {
-      console.error('AI schedule generation failed:', error);
-      return this.generateScheduleWithAdvancedLogic(trainingPlan, userPreferences);
-    }
-  }
-
-  // ============= REAL-TIME COACHING =============
-
-  async getRealtimeCoachingAdvice(sessionContext) {
-    if (!this.initialized) {
-      await this.initialize();
-    }
-
-    try {
-      if (!this.isOnline || this.fallbackMode) {
-        return this.getIntelligentCoachingFallback(sessionContext);
-      }
-
-      const prompt = this.createCoachingPrompt(sessionContext);
-      
-      const response = await this.queueRequest({
-        model: this.models.sessionAnalysis,
-        inputs: prompt,
-        parameters: {
-          max_length: 80,
-          temperature: 0.6,
-          do_sample: true
-        }
-      });
-
-      return {
-        advice: response.generated_text,
-        confidence: this.calculateConfidence(response.generated_text),
-        priority: this.assessAdvicePriority(response.generated_text, sessionContext),
-        timestamp: new Date().toISOString(),
-        source: 'huggingface_ai'
-      };
-
-    } catch (error) {
-      console.error('Real-time coaching error:', error);
-      return this.getIntelligentCoachingFallback(sessionContext);
-    }
-  }
-
-  createCoachingPrompt(context) {
-    return `LIVE COACHING SITUATION:
-Current Drill: ${context.currentDrill || 'Training session'}
-Players: ${context.playerCount || 'Team'} 
-Time Elapsed: ${context.timeElapsed || 0} minutes
-Observed Issues: ${context.issues?.join(', ') || 'None reported'}
-Player Energy: ${context.energyLevel || 'Normal'}
-Weather/Conditions: ${context.conditions || 'Standard'}
-
-Provide immediate, actionable coaching advice (max 50 words). Focus on:
-- Immediate corrections needed
-- Motivation techniques
-- Safety considerations
-- Next steps for improvement
-
-Coach's advice:`;
-  }
-
-  // ============= ADVANCED FALLBACK METHODS =============
+  // ============= ADVANCED FALLBACK =============
 
   async enhanceWithAdvancedFallback(sessions, userProfile) {
-    console.log('AIService: Using advanced intelligent fallback enhancement');
+    console.log('AIService: Using intelligent fallback enhancement');
     
     return sessions.map(weekSession => ({
       ...weekSession,
@@ -535,68 +967,71 @@ Coach's advice:`;
     }));
   }
 
+  async enhanceWeekWithAdvancedFallback(weekSession, userProfile) {
+    return {
+      ...weekSession,
+      aiEnhanced: true,
+      enhancementMethod: 'advanced_fallback',
+      aiProvider: 'internal_intelligence',
+      aiConfidence: 0.85,
+      dailySessions: weekSession.dailySessions.map(session => 
+        this.personalizeSessionAdvanced(session, userProfile, weekSession.weekNumber)
+      ),
+      aiEnhancements: this.generateFallbackEnhancements(weekSession, userProfile)
+    };
+  }
+
   personalizeSessionAdvanced(session, userProfile, weekNumber) {
     const { ageGroup = 'youth', experience = 'beginner', sport = 'soccer', preferences = [], injuries = [] } = userProfile;
     const sportsData = this.sportsKnowledge[sport.toLowerCase()] || this.sportsKnowledge.soccer;
     
     let enhancedSession = { ...session };
     const modifications = [];
-    const progressionFactor = Math.min(weekNumber / 12, 1); // Progressive difficulty
+    const progressionFactor = Math.min(weekNumber / 12, 1);
 
-    // Age-based comprehensive modifications
     const ageConfig = sportsData.ageProgression[ageGroup] || sportsData.ageProgression['10-12'];
     
     enhancedSession.duration = Math.min(session.duration, ageConfig.duration);
     enhancedSession.complexity = ageConfig.complexity;
     modifications.push(`Duration adjusted to ${enhancedSession.duration} minutes for ${ageGroup}`);
 
-    // Experience-based adaptations
     if (experience === 'beginner') {
       enhancedSession.title = session.title.replace(/Advanced|Expert/gi, 'Beginner-Friendly');
       enhancedSession.repetitions = Math.max(1, Math.floor((session.repetitions || 3) * 0.7));
       modifications.push('Reduced repetitions for skill building focus');
-      modifications.push('Added extra demonstration time');
     } else if (experience === 'advanced') {
       enhancedSession.repetitions = Math.ceil((session.repetitions || 3) * (1 + progressionFactor * 0.3));
       modifications.push('Increased repetitions for advanced skill refinement');
     }
 
-    // Progressive intensity scaling
-    const intensityMultiplier = 0.7 + (progressionFactor * 0.4); // 70% to 110% intensity
+    const intensityMultiplier = 0.7 + (progressionFactor * 0.4);
     if (session.intensity) {
       enhancedSession.intensity = Math.round(session.intensity * intensityMultiplier);
     }
 
-    // Injury considerations with specific adaptations
     if (injuries.length > 0) {
       enhancedSession.injuryModifications = this.generateInjuryModifications(injuries, sport);
-      modifications.push(`Modified exercises for ${injuries.join(', ')} considerations`);
+      modifications.push(`Modified for ${injuries.join(', ')} considerations`);
     }
 
-    // Sport-specific skill focus
     const weeklySkillFocus = sportsData.keySkills[weekNumber % sportsData.keySkills.length];
     enhancedSession.primarySkillFocus = weeklySkillFocus;
     modifications.push(`Week focus: ${weeklySkillFocus} development`);
 
-    // Gamification and engagement
     if (preferences.includes('gamification') || ageGroup.includes('4-') || ageGroup.includes('6') || ageGroup.includes('7-9')) {
       enhancedSession.gamificationElements = this.generateGameElements(session, sport, ageGroup);
-      modifications.push('Added game-based learning elements');
+      modifications.push('Added game-based learning');
     }
 
-    // Weather and seasonal adaptations
     enhancedSession.weatherAlternatives = this.generateWeatherAlternatives(session);
     
-    // Equipment optimization
     enhancedSession.equipmentOptimization = {
       required: sportsData.equipment.slice(0, 3),
       alternatives: this.generateEquipmentAlternatives(sportsData.equipment),
-      setupTips: ['Ensure safe spacing', 'Check equipment condition', 'Have backup options ready']
+      setupTips: ['Ensure safe spacing', 'Check equipment condition', 'Have backup options']
     };
 
-    // Assessment and progress tracking
     enhancedSession.assessmentCriteria = this.generateAssessmentCriteria(weeklySkillFocus, ageGroup);
-    
     enhancedSession.aiModifications = modifications;
     enhancedSession.enhancedAt = new Date().toISOString();
     
@@ -611,33 +1046,29 @@ Coach's advice:`;
         case 'knee':
           modifications.knee = [
             'Avoid deep lunges and sharp direction changes',
-            'Focus on straight-line movements initially',
-            'Include knee strengthening exercises',
-            'Use supportive bracing if recommended'
+            'Focus on straight-line movements',
+            'Include knee strengthening exercises'
           ];
           break;
         case 'ankle':
           modifications.ankle = [
             'Minimize jumping and landing exercises',
             'Emphasize balance and stability work',
-            'Avoid uneven surface training',
             'Include proprioception exercises'
           ];
           break;
         case 'shoulder':
           modifications.shoulder = [
-            'Limit overhead movements and throwing',
-            'Focus on controlled, pain-free range of motion',
-            'Emphasize core and lower body training',
-            'Include gentle stretching and mobility work'
+            'Limit overhead movements',
+            'Focus on pain-free range of motion',
+            'Include gentle stretching'
           ];
           break;
         default:
           modifications.general = [
-            'Monitor pain levels throughout session',
+            'Monitor pain levels throughout',
             'Modify intensity based on comfort',
-            'Focus on unaffected areas for skill development',
-            'Consult with medical team for clearance'
+            'Consult medical team for clearance'
           ];
       }
     });
@@ -648,16 +1079,16 @@ Coach's advice:`;
   generateGameElements(session, sport, ageGroup) {
     const baseGames = {
       soccer: [
-        'King of the Ring - ball control challenge',
-        'Traffic Light - stop/go ball work',
-        'Sharks and Minnows - dribbling game',
-        'Red Light Green Light - with ball skills'
+        'King of the Ring - ball control',
+        'Traffic Light - stop/go work',
+        'Sharks and Minnows - dribbling',
+        'Red Light Green Light - skills'
       ],
       basketball: [
-        'Dribble Tag - ball handling fun',
-        'Shooting Stars - point-based shooting',
-        'Mirror Match - coordination game',
-        'Musical Basketballs - fun with fundamentals'
+        'Dribble Tag - handling fun',
+        'Shooting Stars - point-based',
+        'Mirror Match - coordination',
+        'Musical Basketballs - fundamentals'
       ]
     };
 
@@ -667,8 +1098,8 @@ Coach's advice:`;
     return {
       primaryGame: games[0],
       alternatives: games.slice(1, 3),
-      points: Math.round(session.duration * ageMultiplier / 10), // Points system
-      rewards: ['High-five from coach', 'Team cheer', 'Skill badge', 'Extra fun time'],
+      points: Math.round(session.duration * ageMultiplier / 10),
+      rewards: ['High-five', 'Team cheer', 'Skill badge'],
       progressLevels: ['Bronze', 'Silver', 'Gold', 'Champion']
     };
   }
@@ -699,19 +1130,100 @@ Coach's advice:`;
         criteria.tactical = ['Decision making', 'Awareness', 'Application'];
     }
 
-    // Age-appropriate adjustments
     if (ageGroup.includes('4-') || ageGroup.includes('6') || ageGroup.includes('7-9')) {
       criteria.fun = ['Enjoyment level', 'Participation', 'Effort shown'];
-      criteria.social = ['Cooperation', 'Encouragement of others', 'Following instructions'];
+      criteria.social = ['Cooperation', 'Encouragement', 'Following instructions'];
     }
 
-    criteria.physical = ['Movement quality', 'Stamina throughout session', 'Coordination'];
-    criteria.mental = ['Focus level', 'Confidence', 'Resilience to mistakes'];
+    criteria.physical = ['Movement quality', 'Stamina', 'Coordination'];
+    criteria.mental = ['Focus level', 'Confidence', 'Resilience'];
 
     return criteria;
   }
 
-  // ============= REQUEST MANAGEMENT & RATE LIMITING =============
+  generateWeatherAlternatives(session) {
+    return {
+      rain: ['Move to indoor facility', 'Focus on covered areas', 'Tactical discussions'],
+      heat: ['Increase water breaks', 'Reduce duration by 20%', 'Seek shaded areas'],
+      cold: ['Extended warm-up', 'Keep players moving', 'Have indoor backup'],
+      wind: ['Adjust ball work', 'Use wind for challenges', 'Focus on ground-based']
+    };
+  }
+
+  generateEquipmentAlternatives(standardEquipment) {
+    const alternatives = {};
+    
+    standardEquipment.forEach(item => {
+      switch (item) {
+        case 'cones':
+          alternatives[item] = ['water bottles', 'shoes', 'shirts'];
+          break;
+        case 'balls':
+          alternatives[item] = ['tennis balls', 'balloons', 'rolled socks'];
+          break;
+        case 'goals':
+          alternatives[item] = ['cones as posts', 'trees', 'chalk lines'];
+          break;
+        case 'bibs':
+          alternatives[item] = ['colored shirts', 'armbands', 'colored tape'];
+          break;
+        case 'ladders':
+          alternatives[item] = ['chalk lines', 'rope', 'cones in line'];
+          break;
+        default:
+          alternatives[item] = ['improvise with available materials'];
+      }
+    });
+    
+    return alternatives;
+  }
+
+  generateFallbackEnhancements(weekSession, userProfile) {
+    const sport = userProfile.sport || 'soccer';
+    const ageGroup = userProfile.ageGroup || 'youth';
+    const experience = userProfile.experience || 'beginner';
+    
+    return {
+      ageModifications: [
+        `Session adapted for ${ageGroup} players`,
+        experience === 'beginner' ? 'Extra demonstration time' : 'Advanced variations',
+        'Duration optimized for attention span'
+      ],
+      skillProgression: [
+        `Week ${weekSession.weekNumber} builds on previous skills`,
+        'Progressive difficulty scaling',
+        'Clear learning objectives'
+      ],
+      safetyTips: [
+        'Proper warm-up and cool-down',
+        'Age-appropriate intensity',
+        'Equipment safety checks'
+      ],
+      engagementTechniques: [
+        ageGroup.includes('4-') || ageGroup.includes('6-') || ageGroup.includes('7-9') ? 
+          'Game-based learning' : 'Skill challenges',
+        'Positive reinforcement',
+        'Activity variety'
+      ],
+      assessmentMethods: [
+        'Track skill improvements',
+        'Recognize effort and attitude',
+        'Monitor individual progress'
+      ],
+      equipmentTips: [
+        'Setup for maximum participation',
+        'Safety positioning',
+        'Backup options available'
+      ],
+      individualAdaptations: [
+        'Modifications for skill levels',
+        'Physical limitation accommodations',
+        'Confidence-building approaches'
+      ]
+    };
+  }
+
+  // ============= REQUEST MANAGEMENT =============
 
   async queueRequest(requestParams) {
     return new Promise((resolve, reject) => {
@@ -739,7 +1251,6 @@ Coach's advice:`;
       const request = this.requestQueue.shift();
       
       try {
-        // Check rate limits
         if (this.rateLimitCounter >= 100 && this.rateLimitReset && Date.now() < this.rateLimitReset) {
           const waitTime = this.rateLimitReset - Date.now();
           console.log(`Rate limit reached, waiting ${waitTime}ms`);
@@ -751,7 +1262,6 @@ Coach's advice:`;
         this.usageStats.totalRequests++;
         request.resolve(response);
 
-        // Add delay between requests to be respectful
         await this.delay(500);
 
       } catch (error) {
@@ -765,11 +1275,11 @@ Coach's advice:`;
 
   handleAPIError(error) {
     if (error.message.includes('rate limit')) {
-      this.rateLimitReset = Date.now() + (60 * 1000); // Reset in 1 minute
+      this.rateLimitReset = Date.now() + (60 * 1000);
       console.warn('Rate limit hit, implementing backoff');
     } else if (error.message.includes('quota')) {
       this.fallbackMode = true;
-      console.warn('API quota exceeded, switching to fallback mode');
+      console.warn('API quota exceeded, switching to fallback');
     } else {
       console.warn('API error:', error.message);
     }
@@ -791,330 +1301,11 @@ Coach's advice:`;
     return Math.min(lengthScore + coherenceScore + specificityScore + contextScore, 1.0);
   }
 
-  assessAdvicePriority(advice, context) {
-    if (!advice) return 'low';
-    
-    const urgentKeywords = ['stop', 'danger', 'injury', 'immediately', 'careful'];
-    const importantKeywords = ['improve', 'focus', 'adjust', 'change', 'better'];
-    
-    if (urgentKeywords.some(keyword => advice.toLowerCase().includes(keyword))) {
-      return 'urgent';
-    } else if (importantKeywords.some(keyword => advice.toLowerCase().includes(keyword))) {
-      return 'high';
-    } else {
-      return 'medium';
-    }
-  }
-
-  generateWeatherAlternatives(session) {
-    return {
-      rain: [
-        'Move to indoor facility if available',
-        'Focus on ball work in covered areas',
-        'Use gymnasium for fitness components',
-        'Emphasize tactical discussions'
-      ],
-      heat: [
-        'Increase water breaks to every 15 minutes',
-        'Reduce session duration by 20%',
-        'Focus on technical skills over fitness',
-        'Seek shaded areas for activities'
-      ],
-      cold: [
-        'Extended warm-up period (15+ minutes)',
-        'Keep players moving throughout session',
-        'Focus on high-intensity activities',
-        'Have backup indoor activities ready'
-      ],
-      wind: [
-        'Adjust ball work for wind conditions',
-        'Use wind for passing/shooting challenges',
-        'Focus on ground-based activities',
-        'Position goals to minimize wind impact'
-      ]
-    };
-  }
-
-  generateEquipmentAlternatives(standardEquipment) {
-    const alternatives = {};
-    
-    standardEquipment.forEach(item => {
-      switch (item) {
-        case 'cones':
-          alternatives[item] = ['water bottles', 'shoes', 'shirts', 'small rocks'];
-          break;
-        case 'balls':
-          alternatives[item] = ['tennis balls', 'balloons', 'rolled socks', 'bean bags'];
-          break;
-        case 'goals':
-          alternatives[item] = ['cones as posts', 'trees', 'bags', 'chalk lines'];
-          break;
-        case 'bibs':
-          alternatives[item] = ['colored shirts', 'armbands', 'team assignment', 'colored tape'];
-          break;
-        case 'ladders':
-          alternatives[item] = ['chalk lines', 'rope', 'cones in line', 'natural markers'];
-          break;
-        default:
-          alternatives[item] = ['improvise with available materials'];
-      }
-    });
-    
-    return alternatives;
-  }
-
-  generateFallbackEnhancements(weekSession, userProfile) {
-    const sport = userProfile.sport || 'soccer';
-    const ageGroup = userProfile.ageGroup || 'youth';
-    const experience = userProfile.experience || 'beginner';
-    
-    return {
-      ageModifications: [
-        `Session adapted for ${ageGroup} players`,
-        experience === 'beginner' ? 'Extra demonstration time included' : 'Advanced variations provided',
-        'Duration optimized for attention span',
-        'Rest periods adjusted for age group'
-      ],
-      skillProgression: [
-        `Week ${weekSession.weekNumber} builds on previous skills`,
-        'Progressive difficulty scaling implemented',
-        'Multiple skill levels accommodated',
-        'Clear learning objectives defined'
-      ],
-      safetyTips: [
-        'Proper warm-up and cool-down emphasized',
-        'Age-appropriate contact and intensity levels',
-        'Equipment safety checks included',
-        'Weather considerations addressed'
-      ],
-      engagementTechniques: [
-        ageGroup.includes('4-') || ageGroup.includes('6-') || ageGroup.includes('7-9') ? 
-          'Game-based learning prioritized' : 'Skill challenges incorporated',
-        'Positive reinforcement strategies',
-        'Variety in activities to maintain interest',
-        'Individual and team goals balanced'
-      ],
-      assessmentMethods: [
-        'Observable skill improvements tracked',
-        'Effort and attitude recognition',
-        'Individual progress monitoring',
-        'Team cohesion development noted'
-      ],
-      equipmentTips: [
-        'Equipment setup for maximum participation',
-        'Safety positioning of all equipment',
-        'Backup options for missing items',
-        'Age-appropriate equipment sizing'
-      ],
-      individualAdaptations: [
-        'Modifications for different skill levels',
-        'Accommodations for physical limitations',
-        'Confidence-building approaches',
-        'Leadership opportunities for advanced players'
-      ]
-    };
-  }
-
-  getIntelligentCoachingFallback(sessionContext) {
-    const advice = this.generateContextualAdvice(sessionContext);
-    
-    return {
-      advice: advice.message,
-      confidence: 0.8,
-      priority: advice.priority,
-      timestamp: new Date().toISOString(),
-      source: 'intelligent_fallback',
-      actionable: true
-    };
-  }
-
-  generateContextualAdvice(context) {
-    const { currentDrill, playerCount, timeElapsed, issues = [], energyLevel } = context;
-    
-    // Time-based advice
-    if (timeElapsed > 60) {
-      return {
-        message: "Consider a water break and energy check. Keep activities varied to maintain focus.",
-        priority: 'medium'
-      };
-    }
-    
-    if (timeElapsed > 45 && energyLevel === 'low') {
-      return {
-        message: "Switch to a high-energy activity or game to re-engage the players.",
-        priority: 'high'
-      };
-    }
-    
-    // Issue-based advice
-    if (issues.includes('lack of focus')) {
-      return {
-        message: "Use quick, engaging activities. Break into smaller groups for better attention.",
-        priority: 'high'
-      };
-    }
-    
-    if (issues.includes('confusion')) {
-      return {
-        message: "Stop and re-demonstrate. Check understanding before continuing.",
-        priority: 'urgent'
-      };
-    }
-    
-    if (issues.includes('low participation')) {
-      return {
-        message: "Encourage participation with positive reinforcement. Consider modifying difficulty.",
-        priority: 'high'
-      };
-    }
-    
-    // Drill-specific advice
-    if (currentDrill && currentDrill.includes('shooting')) {
-      return {
-        message: "Focus on technique over power. Encourage players to aim for corners.",
-        priority: 'medium'
-      };
-    }
-    
-    if (currentDrill && currentDrill.includes('passing')) {
-      return {
-        message: "Emphasize accuracy and proper weight. Use both feet when possible.",
-        priority: 'medium'
-      };
-    }
-    
-    // Default positive encouragement
-    return {
-      message: "Great progress! Keep encouraging effort over results. Maintain positive energy.",
-      priority: 'low'
-    };
-  }
-
-  parseScheduleResponse(response, trainingPlan, userPreferences) {
-    const schedule = {
-      id: `ai_schedule_${Date.now()}`,
-      planId: trainingPlan.id,
-      type: 'ai_optimized_hf',
-      generatedAt: new Date().toISOString(),
-      sessions: [],
-      recommendations: [],
-      weeklyBreakdown: [],
-      aiGenerated: true,
-      model: 'huggingface'
-    };
-
-    try {
-      // Parse AI response for structured schedule data
-      const lines = response.split('\n').filter(line => line.trim());
-      let currentWeek = 1;
-      let sessionCounter = 1;
-
-      lines.forEach((line, index) => {
-        // Look for week indicators
-        if (line.toLowerCase().includes('week') && /\d+/.test(line)) {
-          const weekMatch = line.match(/week\s*(\d+)/i);
-          if (weekMatch) {
-            currentWeek = parseInt(weekMatch[1]);
-          }
-        }
-
-        // Look for session information
-        if (line.toLowerCase().includes('session') || line.toLowerCase().includes('training')) {
-          const session = {
-            id: `ai_session_${sessionCounter}`,
-            planId: trainingPlan.id,
-            weekNumber: currentWeek,
-            sessionNumber: sessionCounter,
-            title: `${trainingPlan.title} - Week ${currentWeek} Session ${sessionCounter}`,
-            generatedContent: line.trim(),
-            aiScheduled: true
-          };
-
-          schedule.sessions.push(session);
-          sessionCounter++;
-        }
-
-        // Look for recommendations
-        if (line.toLowerCase().includes('recommend') || 
-            line.toLowerCase().includes('consider') ||
-            line.toLowerCase().includes('important')) {
-          schedule.recommendations.push({
-            type: 'ai_suggestion',
-            message: line.trim(),
-            priority: this.assessAdvicePriority(line, { context: 'scheduling' })
-          });
-        }
-      });
-
-      // If we didn't get enough structured data, generate based on plan parameters
-      if (schedule.sessions.length === 0) {
-        schedule.sessions = this.generateScheduleFromPlan(trainingPlan, userPreferences);
-      }
-
-    } catch (error) {
-      console.error('Failed to parse AI schedule response:', error);
-      schedule.sessions = this.generateScheduleFromPlan(trainingPlan, userPreferences);
-    }
-
-    return schedule;
-  }
-
-  generateScheduleFromPlan(trainingPlan, userPreferences) {
-    const sessions = [];
-    const totalSessions = trainingPlan.sessionsCount || 12;
-    const availableDays = userPreferences.availableDays || ['monday', 'wednesday', 'friday'];
-    const weeksNeeded = Math.ceil(totalSessions / availableDays.length);
-
-    for (let week = 1; week <= weeksNeeded; week++) {
-      const sessionsThisWeek = Math.min(
-        availableDays.length, 
-        totalSessions - (week - 1) * availableDays.length
-      );
-
-      for (let session = 0; session < sessionsThisWeek; session++) {
-        const sessionData = {
-          id: `schedule_${week}_${session + 1}`,
-          planId: trainingPlan.id,
-          weekNumber: week,
-          sessionNumber: (week - 1) * availableDays.length + session + 1,
-          title: `${trainingPlan.title} - Week ${week}, Session ${session + 1}`,
-          day: availableDays[session],
-          time: userPreferences.preferredTime || '18:00',
-          duration: userPreferences.sessionDuration || 60,
-          type: this.determineSessionType(session, sessionsThisWeek),
-          intensity: this.calculateIntensity(week, weeksNeeded),
-          aiScheduled: true,
-          generatedAt: new Date().toISOString()
-        };
-
-        sessions.push(sessionData);
-      }
-    }
-
-    return sessions;
-  }
-
-  determineSessionType(sessionIndex, totalSessions) {
-    const types = ['technique', 'fitness', 'tactical', 'scrimmage'];
-    return types[sessionIndex % types.length];
-  }
-
-  calculateIntensity(weekNumber, totalWeeks) {
-    // Progressive intensity: start at 60%, peak at 90%, taper to 70%
-    const progress = weekNumber / totalWeeks;
-    if (progress <= 0.7) {
-      return Math.round(60 + (progress * 30)); // 60% to 81%
-    } else {
-      return Math.round(90 - ((progress - 0.7) * 20)); // 90% to 70%
-    }
-  }
-
   delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   startQueueProcessor() {
-    // Process queue every 2 seconds
     setInterval(() => {
       if (this.requestQueue.length > 0 && !this.isProcessingQueue) {
         this.processQueue();
@@ -1122,7 +1313,7 @@ Coach's advice:`;
     }, 2000);
   }
 
-  // ============= PUBLIC STATUS AND MANAGEMENT METHODS =============
+  // ============= PUBLIC METHODS =============
 
   getStatus() {
     return {
@@ -1163,7 +1354,6 @@ Coach's advice:`;
     }
   }
 
-  // Sport knowledge management
   addSportKnowledge(sport, knowledge) {
     this.sportsKnowledge[sport.toLowerCase()] = knowledge;
     console.log(`Added knowledge for ${sport}`);
@@ -1171,56 +1361,6 @@ Coach's advice:`;
 
   getSportKnowledge(sport) {
     return this.sportsKnowledge[sport.toLowerCase()] || null;
-  }
-
-  // ============= ANALYTICS AND INSIGHTS =============
-
-  async generateSessionAnalytics(sessions) {
-    const analytics = {
-      totalSessions: sessions.length,
-      averageDuration: 0,
-      skillDistribution: {},
-      difficultyProgression: [],
-      aiEnhancementRate: 0,
-      recommendations: []
-    };
-
-    if (sessions.length === 0) return analytics;
-
-    // Calculate averages
-    analytics.averageDuration = sessions.reduce((sum, s) => sum + (s.duration || 0), 0) / sessions.length;
-
-    // Track skill distribution
-    sessions.forEach(session => {
-      if (session.focus) {
-        session.focus.forEach(skill => {
-          analytics.skillDistribution[skill] = (analytics.skillDistribution[skill] || 0) + 1;
-        });
-      }
-    });
-
-    // Track AI enhancement rate
-    const enhancedSessions = sessions.filter(s => s.aiEnhanced);
-    analytics.aiEnhancementRate = (enhancedSessions.length / sessions.length) * 100;
-
-    // Generate recommendations
-    if (analytics.aiEnhancementRate < 50) {
-      analytics.recommendations.push({
-        type: 'improvement',
-        message: 'Consider enabling AI enhancement for better session personalization',
-        priority: 'medium'
-      });
-    }
-
-    if (analytics.averageDuration > 90) {
-      analytics.recommendations.push({
-        type: 'duration',
-        message: 'Average session duration may be too long for optimal engagement',
-        priority: 'high'
-      });
-    }
-
-    return analytics;
   }
 }
 

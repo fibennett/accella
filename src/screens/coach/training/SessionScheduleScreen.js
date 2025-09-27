@@ -320,8 +320,13 @@ const SessionScheduleScreen = ({ navigation, route }) => {
   const [sessionProgress, setSessionProgress] = useState(0);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
+  // AI Enhancement States
+  const [showImproved, setShowImproved] = useState(false);
+  const [improvedContent, setImprovedContent] = useState(null);
+  const [improving, setImproving] = useState(false);
+  const [aiEnhancementAvailable, setAiEnhancementAvailable] = useState(true);
   // Add real-time AI coaching
-const [realtimeCoaching, setRealtimeCoaching] = useState(null);
+  const [realtimeCoaching, setRealtimeCoaching] = useState(null);
 
 const getRealtimeAdvice = async () => {
   const context = {
@@ -418,6 +423,43 @@ const getRealtimeAdvice = async () => {
     }
   };
 
+const handleImproveSession = async () => {
+  console.log('Starting AI session improvement...');
+  setImproving(true);
+  
+  try {
+    // Import AIService dynamically to avoid circular dependencies
+    const { default: AIService } = await import('../../../services/AIService');
+    
+    const userProfile = {
+      ageGroup: session.ageGroup || 'Youth',
+      sport: session.sport || 'General',
+      experience: session.difficulty || 'beginner'
+    };
+    
+    const enhanced = await AIService.improveSingleSession(session, userProfile);
+    
+    if (enhanced && enhanced.enhancedSession) {
+      setImprovedContent(enhanced);
+      setShowImproved(true);
+      setSnackbarMessage('Session enhanced with AI successfully! 🚀');
+      setSnackbarVisible(true);
+    } else {
+      throw new Error('No enhancement data received');
+    }
+    
+  } catch (error) {
+    console.error('AI Enhancement failed:', error);
+    Alert.alert(
+      'AI Enhancement Failed',
+      'Could not enhance the session with AI. Please try again later.',
+      [{ text: 'OK' }]
+    );
+  } finally {
+    setImproving(false);
+  }
+};
+
   const getDifficultyColor = (difficulty) => {
     const difficultyColors = {
       'Beginner': colors.success,
@@ -451,13 +493,21 @@ const getRealtimeAdvice = async () => {
           </Text>
         </View>
         <View style={styles.headerActions}>
+        <IconButton
+          icon="share"
+          iconColor="white"
+          size={24}
+          onPress={handleShareSession}
+        />
+        {aiEnhancementAvailable && (
           <IconButton
-            icon="share"
-            iconColor="white"
+            icon="auto-awesome"
+            iconColor={improvedContent ? "#FFD700" : "white"}
             size={24}
-            onPress={handleShareSession}
+            onPress={handleImproveSession}
           />
-        </View>
+        )}
+    </View>
       </View>
 
       {/* Session Progress */}
@@ -528,23 +578,49 @@ const getRealtimeAdvice = async () => {
     </Surface>
   );
 
-  const renderTabContent = () => {
-    switch (activeTab) {
-      case 'overview':
-        return renderOverview();
-      case 'plan':
-        return renderTrainingPlan();
-      case 'progress':
-        return renderProgress();
-      case 'notes':
-        return renderNotes();
-      default:
-        return renderOverview();
-    }
-  };
+  
 
-  const renderOverview = () => (
-    <View style={styles.tabContent}>
+ const renderTabContent = () => {
+  const contentToRender = showImproved && improvedContent 
+    ? improvedContent.enhancedSession 
+    : session;
+    
+  switch (activeTab) {
+    case 'overview':
+      return renderOverview(contentToRender);
+    case 'plan':
+      return renderTrainingPlan(contentToRender);
+    case 'progress':
+      return renderProgress(contentToRender);
+    case 'notes':
+      return renderNotes(contentToRender);
+    default:
+      return renderOverview(contentToRender);
+  }
+};
+
+  const renderOverview = (contentData = session) => (
+  <View style={styles.tabContent}>
+    {showImproved && improvedContent && (
+      <Card style={styles.sectionCard}>
+        <Card.Content>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md }}>
+            <Icon name="auto-awesome" size={24} color="#FFD700" />
+            <Text style={[textStyles.h3, { marginLeft: spacing.sm, color: "#FFD700" }]}>
+              AI Enhancement Applied
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {improvedContent.improvements.map((improvement, index) => (
+              <Chip key={index} style={[styles.chip, { backgroundColor: colors.success + '20' }]} mode="outlined">
+                {improvement}
+              </Chip>
+            ))}
+          </View>
+        </Card.Content>
+      </Card>
+    )}
+
       {/* Week Information */}
       <Card style={styles.sectionCard}>
         <Card.Content>
@@ -805,6 +881,50 @@ const getRealtimeAdvice = async () => {
     </View>
   );
 
+const renderEnhancementToggle = () => (
+  <Surface style={[styles.sessionInfoCard, { marginTop: 0 }]}>
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Icon 
+          name="auto-awesome" 
+          size={20} 
+          color={showImproved ? "#FFD700" : colors.textSecondary} 
+        />
+        <Text style={[textStyles.subtitle1, { marginLeft: spacing.sm }]}>
+          {showImproved ? 'AI Enhanced View' : 'Original Content'}
+        </Text>
+      </View>
+      
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Text style={[textStyles.caption, { marginRight: spacing.sm }]}>
+          {showImproved ? 'Enhanced' : 'Original'}
+        </Text>
+        <TouchableOpacity
+          onPress={() => setShowImproved(!showImproved)}
+          disabled={!improvedContent}
+          style={{
+            width: 50,
+            height: 30,
+            borderRadius: 15,
+            backgroundColor: showImproved && improvedContent ? colors.primary : colors.textSecondary,
+            justifyContent: 'center',
+            alignItems: showImproved ? 'flex-end' : 'flex-start',
+            paddingHorizontal: 3,
+            opacity: improvedContent ? 1 : 0.5
+          }}
+        >
+          <View style={{
+            width: 24,
+            height: 24,
+            borderRadius: 12,
+            backgroundColor: 'white'
+          }} />
+        </TouchableOpacity>
+      </View>
+    </View>
+  </Surface>
+);
+
   const renderTabNavigation = () => (
     <Surface style={styles.tabContainer}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -864,18 +984,21 @@ const getRealtimeAdvice = async () => {
         >
           {renderSessionInfo()}
           {renderTabContent()}
+          {renderEnhancementToggle()}
         </ScrollView>
       </Animated.View>
 
       {/* Start/End Session FAB */}
+      {/* AI Enhancement FAB */}
       <FAB
-        icon={sessionStarted ? "stop" : "play-arrow"}
+        icon={improving ? "hourglass-empty" : sessionStarted ? "stop" : improvedContent ? "auto-awesome" : "play-arrow"}
         style={[
           styles.fab,
-          { backgroundColor: sessionStarted ? colors.error : colors.success }
+          { backgroundColor: improving ? colors.warning : sessionStarted ? colors.error : improvedContent ? "#FFD700" : colors.success }
         ]}
-        onPress={handleStartSession}
-        label={sessionStarted ? "End Session" : "Start Session"}
+        onPress={improving ? null : (improvedContent ? handleImproveSession : sessionStarted ? handleStartSession : handleImproveSession)}
+        label={improving ? "Enhancing..." : sessionStarted ? "End Session" : improvedContent ? "Re-enhance" : "Enhance with AI"}
+        loading={improving}
       />
 
       {/* Success Snackbar */}

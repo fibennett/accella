@@ -1635,7 +1635,7 @@ async getStoredUsers() {
   try {
     const usersJson = await AsyncStorage.getItem(STORAGE_KEYS.REGISTERED_USERS);
     const users = usersJson ? JSON.parse(usersJson) : [];
-    console.log('📱 getStoredUsers found:', users.length, 'users');
+    //console.log('📱 getStoredUsers found:', users.length, 'users');
     return users;
   } catch (error) {
     console.error('Error getting stored users:', error);

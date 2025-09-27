@@ -224,19 +224,28 @@ const loadDocuments = async () => {
       setUploadProgress(0.9);
       setUploadStatus('Integrity verification complete');
 
-      console.log('About to navigate to processing...');
+      console.log('About to navigate to processing with preview...');
 
-      // Step 4: Navigate to processing
-      navigation.navigate('PlanProcessing', {
-        documentId: result.document.id,
-        onComplete: (trainingPlan) => {
-          navigation.navigate('TrainingPlanLibrary', {
-            newPlanId: trainingPlan?.id,
-            showSuccess: true,
-            message: `"${trainingPlan?.title || 'Training Plan'}" created from document!`
-          });
+        // Generate academy preview
+        let academyPreview = null;
+        try {
+          academyPreview = await DocumentProcessor.previewAcademyInfo(result.document);
+        } catch (error) {
+          console.warn('Could not generate academy preview:', error);
         }
-      });
+
+        // Step 4: Navigate to processing with preview
+        navigation.navigate('PlanProcessing', {
+          documentId: result.document.id,
+          academyPreview: academyPreview,
+          onComplete: (trainingPlan) => {
+            navigation.navigate('TrainingPlanLibrary', {
+              newPlanId: trainingPlan?.id,
+              showSuccess: true,
+              message: `"${academyPreview?.academyName || trainingPlan?.title || 'Training Plan'}" created successfully with AI enhancement!`
+            });
+          }
+        });
 
     } catch (error) {
       console.error('Upload failed with error:', error);

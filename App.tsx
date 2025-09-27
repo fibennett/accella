@@ -1,3 +1,4 @@
+//App.tsx
 import React, { useEffect, useState } from 'react';
 import { StatusBar, View, Text, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
