@@ -429,7 +429,7 @@ const handleTestAllServices = async () => {
               <View style={styles.serviceHeader}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.serviceTitle}>🧠 TensorFlow.js</Text>
-                  <Text style={[styles.serviceDescription, { fontWeight: 'bold', color: colors.primary }]}>
+                  <Text style={[styles.serviceDescription, { fontWeight: 'bold', color: COLORS.primary }]}>
                     PRIMARY AI ENGINE
                   </Text>
                 </View>
