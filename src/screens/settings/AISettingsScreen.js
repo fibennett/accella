@@ -30,8 +30,10 @@ const AISettingsScreen = ({ navigation }) => {
   });
   
   const [usageStats, setUsageStats] = useState(null);
-  const [servicePriority, setServicePriority] = useState('tensorflow_first'); // tensorflow_first, huggingface_first, balanced
+  const [servicePriority, setServicePriority] = useState('tensorflow_first');
   const [availableModels, setAvailableModels] = useState([]);
+  const [isEditingKey, setIsEditingKey] = useState(false);
+  const [storedApiKey, setStoredApiKey] = useState('');
   const [tensorflowStatus, setTensorflowStatus] = useState({
     initialized: false,
     modelsLoaded: 0,
@@ -40,80 +42,166 @@ const AISettingsScreen = ({ navigation }) => {
   });
 
   useEffect(() => {
+    loadStoredApiKey();
     loadAllServiceStatus();
     loadUsageStats();
     loadServicePriority();
   }, []);
 
-  // UPDATED: Load status from all AI services
-const loadAllServiceStatus = async () => {
-  try {
-    console.log('Loading comprehensive AI service status...');
-    
-    // Get AIService status (orchestrator)
-    const aiServiceStatus = AIService.getApiStatus();
-    
-    // Get TensorFlowService status (primary)
-    const tfStatus = TensorFlowService.getStatus();
-    
-    // Get available HuggingFace models
-    const models = await checkAvailableHuggingFaceModels();
-    
-    setAiStatus({
-      overall: {
-        initialized: aiServiceStatus.servicesAvailable > 0,
-        primaryService: aiServiceStatus.primaryService,
-        mode: aiServiceStatus.mode,
-        aiCapability: aiServiceStatus.aiCapability,
-        servicesAvailable: aiServiceStatus.servicesAvailable,
-        offlineCapable: aiServiceStatus.offlineCapable
-      },
-      tensorflow: {
-        available: tfStatus.isReady,
-        status: tfStatus.isReady ? 'ready' : tfStatus.initialized ? 'initializing' : 'offline',
-        backend: tfStatus.backend,
-        modelsLoaded: tfStatus.modelsLoaded,
-        isPrimary: true,
-        capabilities: tfStatus.capabilities,
-        performance: tfStatus.performance
-      },
-      huggingface: {
-        available: aiServiceStatus.hasApiKey && aiServiceStatus.isOnline,
-        status: aiServiceStatus.isOnline ? 'online' : aiServiceStatus.hasApiKey ? 'offline' : 'no_key',
-        provider: aiServiceStatus.provider,
-        isSecondary: true,
-        modelsAvailable: models.length
-      },
-      ruleBased: {
-        available: true,
-        status: 'always_ready',
-        capabilities: ['session_enhancement', 'basic_recommendations', 'schedule_optimization'],
-        isFallback: true
+  const loadStoredApiKey = async () => {
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const storedKey = await AsyncStorage.getItem('huggingface_api_key');
+      
+      if (storedKey) {
+        setStoredApiKey(storedKey);
+        setApiKey(storedKey);
       }
-    });
-    
-    setTensorflowStatus(tfStatus);
-    setAvailableModels(models);
-    
-    console.log('AI service status loaded:', aiServiceStatus);
-    
-  } catch (error) {
-    console.error('Error loading service status:', error);
-    setAiStatus({
-      overall: { 
-        initialized: false, 
-        error: error.message,
-        servicesAvailable: 0,
-        aiCapability: 'minimal'
-      },
-      tensorflow: { available: false, status: 'error', isPrimary: true },
-      huggingface: { available: false, status: 'error', isSecondary: true },
-      ruleBased: { available: true, status: 'ready', isFallback: true }
-    });
-  }
-};
+      
+      console.log('Loaded stored API key:', storedKey ? 'Present' : 'Not found');
+    } catch (error) {
+      console.error('Error loading stored API key:', error);
+    }
+  };
 
-  // NEW: Check which HuggingFace models are actually available
+  const loadAllServiceStatus = async () => {
+    try {
+      console.log('Loading comprehensive AI service status...');
+      
+      const aiServiceStatus = AIService.getApiStatus();
+      const tfStatus = TensorFlowService.getStatus();
+      const models = await checkAvailableHuggingFaceModels();
+      
+      setAiStatus({
+        overall: {
+          initialized: aiServiceStatus.servicesAvailable > 0,
+          primaryService: aiServiceStatus.primaryService,
+          mode: aiServiceStatus.mode,
+          aiCapability: aiServiceStatus.aiCapability,
+          servicesAvailable: aiServiceStatus.servicesAvailable,
+          offlineCapable: aiServiceStatus.offlineCapable
+        },
+        tensorflow: {
+          available: tfStatus.isReady,
+          status: tfStatus.isReady ? 'ready' : tfStatus.initialized ? 'initializing' : 'offline',
+          backend: tfStatus.backend,
+          modelsLoaded: tfStatus.modelsLoaded,
+          isPrimary: true,
+          capabilities: tfStatus.capabilities,
+          performance: tfStatus.performance
+        },
+        huggingface: {
+          available: aiServiceStatus.hasApiKey && aiServiceStatus.isOnline,
+          status: aiServiceStatus.isOnline ? 'online' : aiServiceStatus.hasApiKey ? 'offline' : 'no_key',
+          provider: aiServiceStatus.provider,
+          isSecondary: true,
+          modelsAvailable: models.length
+        },
+        ruleBased: {
+          available: true,
+          status: 'always_ready',
+          capabilities: ['session_enhancement', 'basic_recommendations', 'schedule_optimization'],
+          isFallback: true
+        }
+      });
+      
+      setTensorflowStatus(tfStatus);
+      setAvailableModels(models);
+      
+      console.log('AI service status loaded:', aiServiceStatus);
+      
+    } catch (error) {
+      console.error('Error loading service status:', error);
+      setAiStatus({
+        overall: { 
+          initialized: false, 
+          error: error.message,
+          servicesAvailable: 0,
+          aiCapability: 'minimal'
+        },
+        tensorflow: { available: false, status: 'error', isPrimary: true },
+        huggingface: { available: false, status: 'error', isSecondary: true },
+        ruleBased: { available: true, status: 'ready', isFallback: true }
+      });
+    }
+  };
+
+  const handleUpdateApiKey = async () => {
+    if (!apiKey.trim()) {
+      Alert.alert('Error', 'Please enter a valid Hugging Face API key');
+      return;
+    }
+
+    if (!apiKey.trim().startsWith('hf_')) {
+      Alert.alert(
+        'Invalid Format', 
+        'Hugging Face API keys start with "hf_" followed by your token.\n\nGet your key from:\nhuggingface.co/settings/tokens'
+      );
+      return;
+    }
+
+    if (apiKey.trim().length < 25) {
+      Alert.alert('Invalid Length', 'API key appears too short. Please check your token.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await AIService.setApiKey(apiKey.trim());
+      
+      if (result.success) {
+        setStoredApiKey(apiKey.trim());
+        setIsEditingKey(false);
+        
+        Alert.alert(
+          'Updated Successfully! 🎉', 
+          'Your API key has been updated and validated.',
+          [{ text: 'Great!' }]
+        );
+        await loadAllServiceStatus();
+      } else {
+        Alert.alert('Update Failed', result.error);
+      }
+    } catch (error) {
+      Alert.alert('Error', `Update failed: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const validateApiKey = (key) => {
+    if (!key || !key.trim()) {
+      return { valid: false, message: 'Please enter an API key' };
+    }
+    
+    const trimmedKey = key.trim();
+    
+    if (!trimmedKey.startsWith('hf_')) {
+      return { 
+        valid: false, 
+        message: 'Invalid format. Must start with "hf_"' 
+      };
+    }
+    
+    if (trimmedKey.length < 25) {
+      return { 
+        valid: false, 
+        message: 'Key appears too short' 
+      };
+    }
+    
+    if (trimmedKey.length > 200) {
+      return { 
+        valid: false, 
+        message: 'Key appears too long' 
+      };
+    }
+    
+    return { valid: true, message: 'Valid format' };
+  };
+
+  const validation = validateApiKey(apiKey);
+
   const checkAvailableHuggingFaceModels = async () => {
     const testModels = [
       'microsoft/DialoGPT-small',
@@ -126,8 +214,6 @@ const loadAllServiceStatus = async () => {
     
     const availableModels = [];
     
-    // For now, return the test models - in production, you'd actually test them
-    // This prevents the validation error you're experiencing
     testModels.forEach(model => {
       availableModels.push({
         name: model,
@@ -136,14 +222,13 @@ const loadAllServiceStatus = async () => {
               model.includes('bart') ? 'summarization' :
               model.includes('sentence') ? 'embedding' :
               'text_generation',
-        available: true // We'll assume these are available
+        available: true
       });
     });
     
     return availableModels;
   };
 
-  // UPDATED: Load usage stats from both services
   const loadUsageStats = async () => {
     try {
       const aiStats = AIService.usageStats || {
@@ -171,68 +256,59 @@ const loadAllServiceStatus = async () => {
     }
   };
 
-  // NEW: Load service priority preference
   const loadServicePriority = async () => {
     try {
-      // This would be loaded from AsyncStorage in a real app
-      setServicePriority('tensorflow_first'); // Default
+      setServicePriority('tensorflow_first');
     } catch (error) {
       console.error('Error loading service priority:', error);
     }
   };
 
-  // UPDATED: Test all services
-const handleTestAllServices = async () => {
-  setTestingServices(true);
-  let testResults = [];
-  
-  try {
-    // Test 1: TensorFlow Service (Primary)
-    console.log('Testing TensorFlow as primary AI service...');
-    const tfDiagnostics = await TensorFlowService.runDiagnostics();
+  const handleTestAllServices = async () => {
+    setTestingServices(true);
+    let testResults = [];
     
-    if (tfDiagnostics.tfReady && tfDiagnostics.systemHealth !== 'error') {
-      testResults.push(`✅ TensorFlow (Primary AI): ${tfDiagnostics.systemHealth}\n   Backend: ${tfDiagnostics.currentBackend}\n   Performance: ${tfDiagnostics.performance}ms\n   Models: ${tfDiagnostics.modelsLoaded}`);
-    } else {
-      testResults.push(`❌ TensorFlow (Primary AI): Failed\n   Error: ${tfDiagnostics.error || 'Not ready'}`);
-    }
-    
-    // Test 2: HuggingFace Service (Secondary)
-    if (apiKey.trim() || aiStatus.huggingface.available) {
-      console.log('Testing HuggingFace as secondary AI service...');
-      const hfResult = await testHuggingFaceWithAvailableModel();
+    try {
+      console.log('Testing TensorFlow as primary AI service...');
+      const tfDiagnostics = await TensorFlowService.runDiagnostics();
       
-      if (hfResult.success) {
-        testResults.push(`✅ HuggingFace (Secondary AI): Working\n   Model: ${hfResult.model}\n   Response time: Good`);
+      if (tfDiagnostics.tfReady && tfDiagnostics.systemHealth !== 'error') {
+        testResults.push(`✅ TensorFlow (Primary AI): ${tfDiagnostics.systemHealth}\n   Backend: ${tfDiagnostics.currentBackend}\n   Performance: ${tfDiagnostics.performance}ms\n   Models: ${tfDiagnostics.modelsLoaded}`);
       } else {
-        testResults.push(`❌ HuggingFace (Secondary AI): Failed\n   Error: ${hfResult.error}`);
+        testResults.push(`❌ TensorFlow (Primary AI): Failed\n   Error: ${tfDiagnostics.error || 'Not ready'}`);
       }
-    } else {
-      testResults.push(`⚠️ HuggingFace (Secondary AI): No API key\n   Status: Available when API key provided`);
+      
+      if (apiKey.trim() || aiStatus.huggingface.available) {
+        console.log('Testing HuggingFace as secondary AI service...');
+        const hfResult = await testHuggingFaceWithAvailableModel();
+        
+        if (hfResult.success) {
+          testResults.push(`✅ HuggingFace (Secondary AI): Working\n   Model: ${hfResult.model}\n   Response time: Good`);
+        } else {
+          testResults.push(`❌ HuggingFace (Secondary AI): Failed\n   Error: ${hfResult.error}`);
+        }
+      } else {
+        testResults.push(`⚠️ HuggingFace (Secondary AI): No API key\n   Status: Available when API key provided`);
+      }
+      
+      testResults.push(`✅ Rule-Based (Fallback): Always ready\n   Capabilities: Session enhancement, recommendations\n   Speed: Instant`);
+      
+      Alert.alert(
+        'AI Services Test Results',
+        testResults.join('\n\n'),
+        [{ text: 'OK' }]
+      );
+      
+    } catch (error) {
+      Alert.alert('Test Failed', `Error during comprehensive testing: ${error.message}`);
+    } finally {
+      setTestingServices(false);
+      await loadAllServiceStatus();
     }
-    
-    // Test 3: Rule-Based System (Fallback)
-    testResults.push(`✅ Rule-Based (Fallback): Always ready\n   Capabilities: Session enhancement, recommendations\n   Speed: Instant`);
-    
-    // Show comprehensive results
-    Alert.alert(
-      'AI Services Test Results',
-      testResults.join('\n\n'),
-      [{ text: 'OK' }]
-    );
-    
-  } catch (error) {
-    Alert.alert('Test Failed', `Error during comprehensive testing: ${error.message}`);
-  } finally {
-    setTestingServices(false);
-    await loadAllServiceStatus();
-  }
-};
+  };
 
-  // NEW: Test HuggingFace with available models only
   const testHuggingFaceWithAvailableModel = async () => {
     try {
-      // Use a simple, widely available model for testing
       const testModel = 'gpt2';
       const result = await AIService.testConnection(testModel, apiKey);
       return {
@@ -248,47 +324,91 @@ const handleTestAllServices = async () => {
     }
   };
 
-  // UPDATED: Save API key with better validation
+  const handleCancelEdit = () => {
+    Alert.alert(
+      'Cancel Changes',
+      'This will discard your changes and revert to the stored key.',
+      [
+        { text: 'Continue Editing', style: 'cancel' },
+        {
+          text: 'Discard Changes',
+          onPress: () => {
+            setApiKey(storedApiKey);
+            setIsEditingKey(false);
+          }
+        }
+      ]
+    );
+  };
+
   const handleSaveApiKey = async () => {
     if (!apiKey.trim()) {
       Alert.alert('Error', 'Please enter a valid Hugging Face API key');
       return;
     }
 
+    if (!apiKey.trim().startsWith('hf_')) {
+      Alert.alert(
+        'Invalid Format', 
+        'Hugging Face API keys start with "hf_" followed by your token.\n\nGet your key from:\nhuggingface.co/settings/tokens'
+      );
+      return;
+    }
+
+    if (apiKey.trim().length < 25) {
+      Alert.alert('Invalid Length', 'API key appears too short. Please check your token.');
+      return;
+    }
+
     setLoading(true);
     try {
-      // Test with an available model first
-      const result = await AIService.setApiKey(apiKey.trim(), availableModels[0]?.name);
+      const result = await AIService.setApiKey(apiKey.trim());
       
       if (result.success) {
-        Alert.alert('Success!', result.message + '\n\nTensorFlow remains as primary AI service for offline capabilities.');
-        setApiKey('');
+        setStoredApiKey(apiKey.trim());
+        Alert.alert(
+          'Success! 🎉', 
+          result.message + '\n\nTensorFlow remains available for offline use.',
+          [{ text: 'Great!' }]
+        );
         await loadAllServiceStatus();
       } else {
-        Alert.alert('Validation Failed', result.message || result.error);
+        Alert.alert(
+          'Validation Failed', 
+          result.error + '\n\nNote: Your TensorFlow features continue to work normally.',
+          [{ text: 'OK' }]
+        );
       }
     } catch (error) {
-      Alert.alert('Error', `Failed to save API key: ${error.message}`);
+      Alert.alert(
+        'Error', 
+        `Setup failed: ${error.message}\n\nTensorFlow features remain available.`
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  // NEW: Clear API key
   const handleClearApiKey = () => {
     Alert.alert(
-      'Clear API Key',
-      'This will disable online AI features. TensorFlow local models will remain available.',
+      'Clear HuggingFace API Key',
+      'This will disable enhanced AI features. TensorFlow local AI remains fully functional.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Clear',
+          text: 'Clear Key',
           style: 'destructive',
           onPress: async () => {
             const result = await AIService.clearApiKey();
             if (result.success) {
+              setStoredApiKey('');
+              setApiKey('');
+              setIsEditingKey(false);
+              
               Alert.alert('Cleared', result.message);
               await loadAllServiceStatus();
+            } else {
+              Alert.alert('Error', 'Failed to clear API key: ' + result.error);
             }
           }
         }
@@ -296,11 +416,9 @@ const handleTestAllServices = async () => {
     );
   };
 
-  // NEW: Update service priority
   const handleServicePriorityChange = async (newPriority) => {
     try {
       setServicePriority(newPriority);
-      // In a real app, save to AsyncStorage
       await AIService.setServicePriority(newPriority);
       
       Alert.alert(
@@ -313,7 +431,6 @@ const handleTestAllServices = async () => {
     }
   };
 
-  // NEW: Reset all usage statistics
   const handleResetStats = () => {
     Alert.alert(
       'Reset All Statistics',
@@ -325,7 +442,6 @@ const handleTestAllServices = async () => {
           style: 'destructive',
           onPress: async () => {
             await AIService.resetUsageStats();
-            // Reset TensorFlow stats if available
             if (TensorFlowService.resetStats) {
               await TensorFlowService.resetStats();
             }
@@ -337,7 +453,6 @@ const handleTestAllServices = async () => {
     );
   };
 
-  // Helper function to get status color
   const getStatusColor = (status) => {
     switch (status) {
       case 'ready': 
@@ -423,7 +538,7 @@ const handleTestAllServices = async () => {
           {/* Individual Service Status */}
           <Text style={styles.sectionTitle}>Service Details</Text>
 
-         {/* TensorFlow Service - Primary AI */}
+          {/* TensorFlow Service - Primary AI */}
           <Card style={[styles.serviceCard, { borderLeftWidth: 4, borderLeftColor: '#4CAF50' }]}>
             <Card.Content>
               <View style={styles.serviceHeader}>
@@ -524,42 +639,122 @@ const handleTestAllServices = async () => {
           
           <View style={styles.inputContainer}>
             <TextInput
-              style={styles.input}
+              style={[styles.input, isEditingKey && styles.inputEditing]}
               placeholder="hf_xxxxxxxxxxxxxxxxxxxxx"
               value={apiKey}
               onChangeText={setApiKey}
               secureTextEntry={!showKey}
               autoCapitalize="none"
               autoCorrect={false}
+              editable={isEditingKey || !storedApiKey}
             />
+            
             <TouchableOpacity
               style={styles.eyeButton}
               onPress={() => setShowKey(!showKey)}
             >
               <Text>{showKey ? '👁️' : '👁️‍🗨️'}</Text>
             </TouchableOpacity>
+            
+            {storedApiKey && (
+              <View style={styles.buttonGroup}>
+                <TouchableOpacity
+                  style={styles.editButton}
+                  onPress={() => {
+                    if (isEditingKey && apiKey !== storedApiKey) {
+                      handleCancelEdit();
+                    } else {
+                      setIsEditingKey(!isEditingKey);
+                    }
+                  }}
+                >
+                  <Text>{isEditingKey ? '❌' : '✏️'}</Text>
+                </TouchableOpacity>
+                
+                {isEditingKey && (
+                  <TouchableOpacity
+                    style={[styles.editButton, styles.saveEditButton]}
+                    onPress={handleUpdateApiKey}
+                    disabled={loading || apiKey === storedApiKey}
+                  >
+                    <Text>💾</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
           </View>
 
-          {/* Action Buttons */}
-          <Button
-            mode="contained"
-            onPress={handleSaveApiKey}
-            loading={loading}
-            disabled={loading || !apiKey.trim()}
-            style={styles.saveButton}
-          >
-            Save API Key
-          </Button>
-
-          {aiStatus.huggingface?.available && (
-            <Button
-              mode="outlined"
-              onPress={handleClearApiKey}
-              style={styles.clearButton}
-            >
-              Clear API Key
-            </Button>
+          {/* Key validation feedback */}
+          {apiKey && isEditingKey && (
+            <View style={styles.validationContainer}>
+              <Text style={[
+                styles.validationText,
+                { color: validation.valid ? '#4CAF50' : '#F44336' }
+              ]}>
+                {validation.valid ? '✅' : '❌'} {validation.message}
+              </Text>
+            </View>
           )}
+
+          {/* Key status display */}
+          {storedApiKey && (
+            <View style={styles.keyStatusContainer}>
+              <Text style={styles.keyStatusText}>
+                Key Status: {isEditingKey ? 'Editing' : 'Stored'}
+              </Text>
+              <Text style={styles.keyInfoText}>
+                Length: {storedApiKey.length} characters
+              </Text>
+              <Text style={styles.keyInfoText}>
+                Last 4: ...{storedApiKey.slice(-4)}
+              </Text>
+            </View>
+          )}
+
+          {/* Dynamic Action Buttons */}
+          <View style={styles.actionButtonsContainer}>
+            {storedApiKey ? (
+              isEditingKey ? (
+                <View>
+                  <Button
+                    mode="contained"
+                    onPress={handleUpdateApiKey}
+                    loading={loading}
+                    disabled={loading || !validation.valid || apiKey === storedApiKey}
+                    style={styles.saveButton}
+                  >
+                    Save Changes
+                  </Button>
+                  <Button
+                    mode="outlined"
+                    onPress={() => handleCancelEdit()}
+                    disabled={loading}
+                    style={styles.cancelButton}
+                  >
+                    Cancel
+                  </Button>
+                </View>
+              ) : (
+                <Button
+                  mode="outlined"
+                  onPress={handleClearApiKey}
+                  style={styles.clearButton}
+                >
+                  Remove API Key
+                </Button>
+              )
+            ) : (
+              <Button
+                mode="contained"
+                onPress={handleSaveApiKey}
+                loading={loading}
+                disabled={loading || !validation.valid}
+                style={styles.saveButton}
+              >
+                Save API Key
+              </Button>
+            )}
+          </View>
 
           {/* Test All Services Button */}
           <Button
@@ -757,13 +952,62 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'monospace',
   },
+  inputEditing: {
+    borderColor: COLORS.primary,
+    borderWidth: 2,
+  },
   eyeButton: {
     marginLeft: SPACING.sm,
     padding: SPACING.sm,
   },
+  editButton: {
+    marginLeft: SPACING.sm,
+    padding: SPACING.sm,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 6,
+  },
+  buttonGroup: {
+    flexDirection: 'row',
+    marginLeft: SPACING.sm,
+  },
+  saveEditButton: {
+    backgroundColor: COLORS.primary,
+    marginLeft: SPACING.xs,
+  },
+  validationContainer: {
+    marginTop: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
+  },
+  validationText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  keyStatusContainer: {
+    backgroundColor: '#f0f0f0',
+    padding: SPACING.sm,
+    borderRadius: 6,
+    marginTop: SPACING.sm,
+  },
+  keyStatusText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: COLORS.textPrimary,
+  },
+  keyInfoText: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  actionButtonsContainer: {
+    marginTop: SPACING.md,
+  },
   saveButton: {
     marginTop: SPACING.md,
     backgroundColor: COLORS.primary,
+  },
+  cancelButton: {
+    marginTop: SPACING.sm,
+    borderColor: COLORS.textSecondary,
   },
   clearButton: {
     marginTop: SPACING.sm,

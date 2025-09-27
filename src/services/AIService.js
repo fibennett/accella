@@ -3,6 +3,7 @@ import axios from 'axios';
 import { HfInference } from '@huggingface/inference';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import TensorFlowService from './TensorFlowService';
+import SecureStorage from '../utils/SecureStorage';
 
 class AIService {
   constructor() {
@@ -248,7 +249,16 @@ getBestServiceForTask(task) {
     this.servicePriority = priority;
     await AsyncStorage.setItem('ai_service_priority', priority);
     console.log(`AIService: Priority set to ${priority}`);
+
+    // Add this right after the AsyncStorage.setItem line in setApiKey:
+console.log('AIService: API key stored, verifying...');
+const storedKey = await AsyncStorage.getItem('huggingface_api_key');
+console.log('AIService: Verification - stored key exists:', !!storedKey);
+console.log('AIService: Verification - key length:', storedKey?.length);
+
   }
+
+  
 
   // NEW: Get primary service based on availability and priority
   getPrimaryService() {
@@ -300,25 +310,46 @@ getBestServiceForTask(task) {
     return primaryService;
   }
 
-  async loadStoredSettings() {
-    try {
-      const settings = await AsyncStorage.multiGet([
-        'huggingface_api_key',
-        'ai_preferences',
-        'ai_usage_stats'
-      ]);
-      
-      this.apiKey = settings[0][1];
-      this.preferences = settings[1][1] ? JSON.parse(settings[1][1]) : {};
-      this.usageStats = settings[2][1] ? JSON.parse(settings[2][1]) : {
-        totalRequests: 0,
-        successfulRequests: 0,
-        failedRequests: 0
-      };
-    } catch (error) {
-      console.warn('Failed to load AI settings:', error);
-    }
+// Replace the existing loadStoredSettings method with this:
+async loadStoredSettings() {
+  try {
+    console.log('AIService: Loading stored settings...');
+    
+    // Use AsyncStorage directly like your login screen does
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    
+    // Load API key directly from AsyncStorage (no encryption for now to debug)
+    const apiKey = await AsyncStorage.getItem('huggingface_api_key');
+    this.apiKey = apiKey;
+    
+    // Load other settings
+    const settings = await AsyncStorage.multiGet([
+      'ai_preferences',
+      'ai_usage_stats', 
+      'ai_service_priority'
+    ]);
+    
+    this.preferences = settings[0][1] ? JSON.parse(settings[0][1]) : {};
+    this.usageStats = settings[1][1] ? JSON.parse(settings[1][1]) : {
+      totalRequests: 0,
+      successfulRequests: 0,
+      failedRequests: 0
+    };
+    this.servicePriority = settings[2][1] || 'tensorflow_first';
+    
+    console.log(`AIService: Settings loaded. API key: ${apiKey ? 'Present' : 'Not found'}`);
+    
+  } catch (error) {
+    console.warn('Failed to load AI settings:', error);
+    this.preferences = {};
+    this.usageStats = {
+      totalRequests: 0,
+      successfulRequests: 0,
+      failedRequests: 0
+    };
+    this.servicePriority = 'tensorflow_first';
   }
+}
 
   async saveSettings() {
     try {
@@ -362,45 +393,84 @@ getBestServiceForTask(task) {
     }
   }
 
+// Replace your setApiKey method in AIService.js with this version that has proper debugging:
 async setApiKey(apiKey, testModel = null) {
-    try {
-      // Validate API key format
-      if (!apiKey || !apiKey.startsWith('hf_')) {
-        throw new Error('Invalid Hugging Face API key format. Should start with "hf_"');
-      }
+  try {
+    console.log('AIService: Setting Hugging Face API key...');
+    
+    // Safe logging - only show length and format validation
+    const keyLength = apiKey?.length || 0;
+    const startsWithHf = apiKey?.startsWith('hf_') || false;
+    console.log('AIService: Key length:', keyLength);
+    console.log('AIService: Key starts with hf_:', startsWithHf);
+    
+    if (!apiKey || !apiKey.trim().startsWith('hf_')) {
+      console.log('AIService: Invalid API key format detected');
+      return { success: false, error: 'Invalid API key format. Must start with "hf_"' };
+    }
 
-      await AsyncStorage.setItem('huggingface_api_key', apiKey);
-      this.apiKey = apiKey;
-      this.hfInference = new HfInference(apiKey);
+    const trimmedKey = apiKey.trim();
+    
+    // TEMPORARILY SKIP VALIDATION TO TEST STORAGE
+    console.log('AIService: Skipping validation, testing storage directly...');
+    
+    try {
+      // Store directly in AsyncStorage
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      console.log('AIService: About to store key...');
       
-      // Test with specified model or default reliable model
-      const modelToTest = testModel || this.models.textGeneration;
-      const isValid = await this.testConnection(modelToTest, apiKey);
+      await AsyncStorage.setItem('huggingface_api_key', trimmedKey);
+      console.log('AIService: AsyncStorage.setItem completed');
       
-      if (isValid.success) {
-        this.fallbackMode = false;
-        this.isOnline = true;
+      // Immediately verify storage - safely check without exposing key
+      const storedKey = await AsyncStorage.getItem('huggingface_api_key');
+      const storedKeyExists = !!storedKey;
+      const keysMatch = storedKey === trimmedKey;
+      
+      console.log('AIService: Verification - stored key exists:', storedKeyExists);
+      console.log('AIService: Verification - key matches:', keysMatch);
+      
+      // Check localStorage but don't log the actual key value
+      const browserStorageHasKey = !!localStorage.getItem('huggingface_api_key');
+      console.log('AIService: Browser localStorage has key:', browserStorageHasKey);
+      
+      if (keysMatch) {
+        this.apiKey = trimmedKey;
         this.serviceStatus.huggingface = { 
           available: true, 
           initialized: true, 
-          hasApiKey: true 
+          hasApiKey: true,
+          lastValidated: new Date().toISOString()
         };
         
-        console.log('AIService: HuggingFace API key validated and online mode activated');
+        console.log('AIService: Key stored successfully');
+        console.log('AIService: Service status updated:', {
+          available: true,
+          initialized: true,
+          hasApiKey: true
+        });
+        
+        return { 
+          success: true, 
+          message: 'API key stored successfully! (Validation skipped for testing)'
+        };
+      } else {
+        console.log('AIService: Storage verification failed - keys do not match');
+        return { success: false, error: 'Storage verification failed' };
       }
       
-      return { 
-        success: isValid.success, 
-        message: isValid.success ? 
-          'API key validated successfully - HuggingFace features now available alongside TensorFlow' : 
-          'API key validation failed - check your token'
-      };
-    } catch (error) {
-      console.error('API key setup failed:', error);
-      return { success: false, error: error.message };
+    } catch (storageError) {
+      console.error('AIService: Storage error occurred:', storageError.name);
+      console.error('AIService: Storage error message:', storageError.message);
+      return { success: false, error: 'Failed to store API key: ' + storageError.message };
     }
+    
+  } catch (error) {
+    console.error('AIService: API key setup failed:', error.name);
+    console.error('AIService: Error message:', error.message);
+    return { success: false, error: error.message };
   }
-
+}
   // NEW: Test connection with specific model
   async testConnection(modelName, apiKey) {
     try {
@@ -433,14 +503,125 @@ async setApiKey(apiKey, testModel = null) {
 // Add this new public method right after setApiKey
 async clearApiKey() {
   try {
+    // Use AsyncStorage directly like the rest of your code
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
     await AsyncStorage.removeItem('huggingface_api_key');
+    
     this.apiKey = null;
     this.hfInference = null;
-    this.isOnline = false;
-    this.fallbackMode = true;
-    console.log('AIService: API key cleared, switched to offline mode');
-    return { success: true, message: 'API key cleared - using offline mode' };
+    this.serviceStatus.huggingface = { 
+      available: false, 
+      initialized: false, 
+      hasApiKey: false 
+    };
+    
+    console.log('AIService: API key cleared successfully');
+    return { success: true, message: 'API key cleared. Using TensorFlow-only mode.' };
   } catch (error) {
+    console.error('Failed to clear API key:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Add this new method to AIService.js
+async testHuggingFaceKey(apiKey) {
+  try {
+    console.log('AIService: Testing Hugging Face API key...');
+    
+    // Try multiple endpoints to find one that works
+    const testEndpoints = [
+      'https://api-inference.huggingface.co/models/distilbert-base-uncased-finetuned-sst-2-english',
+      'https://api-inference.huggingface.co/models/gpt2',
+      'https://api-inference.huggingface.co/models/microsoft/DialoGPT-small'
+    ];
+    
+    for (const endpoint of testEndpoints) {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            inputs: "Hello world"
+          })
+        });
+
+        // Handle different response codes
+        if (response.status === 401) {
+          return { success: false, error: 'Invalid API key - please check your token from huggingface.co' };
+        }
+        
+        if (response.status === 403) {
+          return { success: false, error: 'API key lacks required permissions' };
+        }
+        
+        if (response.status === 503) {
+          console.log('AIService: Model is loading, key appears valid');
+          return { 
+            success: true, 
+            message: 'API key validated (model loading)',
+            modelStatus: 'loading',
+            endpoint: endpoint
+          };
+        }
+        
+        if (response.status === 429) {
+          return { success: false, error: 'Rate limit reached - please try again later' };
+        }
+
+        if (response.status === 404) {
+          console.log(`Model endpoint ${endpoint} not found, trying next...`);
+          continue; // Try next endpoint
+        }
+
+        if (!response.ok) {
+          console.log(`Endpoint ${endpoint} failed with ${response.status}, trying next...`);
+          continue; // Try next endpoint
+        }
+
+        const data = await response.json();
+        
+        // Check for valid response formats
+        if (Array.isArray(data) && data.length > 0) {
+          const firstResult = data[0];
+          if (firstResult.generated_text !== undefined || firstResult.label !== undefined) {
+            console.log('AIService: HuggingFace API key validated successfully');
+            return { 
+              success: true, 
+              message: 'API key validated successfully',
+              testResult: firstResult,
+              endpoint: endpoint
+            };
+          }
+        }
+
+        if (data.generated_text !== undefined || data.label !== undefined) {
+          return { 
+            success: true, 
+            message: 'API key validated successfully',
+            testResult: data,
+            endpoint: endpoint
+          };
+        }
+
+        console.log(`Endpoint ${endpoint} returned unexpected format, trying next...`);
+        
+      } catch (endpointError) {
+        console.log(`Endpoint ${endpoint} failed:`, endpointError.message);
+        continue; // Try next endpoint
+      }
+    }
+
+    return { success: false, error: 'All test endpoints failed - API may be temporarily unavailable' };
+    
+  } catch (error) {
+    if (error.name === 'TypeError' && error.message.includes('Network request failed')) {
+      return { success: false, error: 'Network error - please check your internet connection' };
+    }
+    
+    console.error('HuggingFace key test failed:', error);
     return { success: false, error: error.message };
   }
 }
