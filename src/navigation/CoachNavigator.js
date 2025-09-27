@@ -62,6 +62,7 @@ import ParentCommunication from '../screens/coach/players/ParentCommunication';
 import PlayerGoals from '../screens/coach/players/PlayerGoals';
 
 // AI & Technology Screens
+import AISettingsScreen from '../screens/settings/AISettingsScreen';
 import AIWorkoutGenerator from '../screens/coach/ai/AIWorkoutGenerator';
 import PerformancePrediction from '../screens/coach/ai/PerformancePrediction';
 import PersonalizedPlans from '../screens/coach/ai/PersonalizedPlans';
@@ -614,6 +615,11 @@ const DashboardStack = () => (
       options={{ title: 'Upcoming Sessions' }} 
     />
     <Stack.Screen 
+      name="AISettings" 
+      component={AISettingsScreen}
+      options={{ title: 'AI Configuration' }}
+    />
+    <Stack.Screen 
       name="RecentActivity" 
       component={RecentActivity}
       options={{ title: 'Recent Activity' }} 
@@ -830,6 +836,11 @@ const TrainingStack = () => (
       name="SessionBuilder" 
       component={SessionBuilder}
       options={{ title: 'Session Builder' }} 
+    />
+    <Stack.Screen 
+      name="AISettings" 
+      component={AISettingsScreen}
+      options={{ title: 'AI Configuration' }}
     />
     <Stack.Screen 
       name="DocumentLibrary" 

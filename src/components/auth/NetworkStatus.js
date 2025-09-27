@@ -1,3 +1,4 @@
+//src/components/auth/NetworkStatus.js
 import React, { memo } from 'react';
 import {
   View,

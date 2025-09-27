@@ -35,6 +35,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import { COLORS } from '../../styles/colors';
 import { SPACING } from '../../styles/spacing';
 import { TEXT_STYLES } from '../../styles/textStyles';
+import AIService from '../../../services/AIService';
 
 const { width: screenWidth } = Dimensions.get('window');
 

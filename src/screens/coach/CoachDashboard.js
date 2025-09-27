@@ -416,44 +416,52 @@ const CoachDashboard = ({ navigation }) => {
   ];
 
   // Comprehensive menu options
-  const menuOptions = [
-    { 
-      icon: 'search', 
-      label: 'Quick Search', 
-      action: () => setQuickSearchVisible(true),
-      category: 'General'
-    },
-    { 
-      icon: 'analytics', 
-      label: 'Performance Analytics', 
-      action: () => navigation.navigate('PerformanceAnalytics'),
-      category: 'Analytics'
-    },
-    { 
-      icon: 'smart-toy', 
-      label: 'AI Assistant', 
-      action: () => navigation.navigate('AIWorkoutGenerator'),
-      category: 'AI Tools'
-    },
-    { 
-      icon: 'video-library', 
-      label: 'Video Library', 
-      action: () => navigation.navigate('VideoLibrary'),
-      category: 'Content'
-    },
-    { 
-      icon: 'restaurant', 
-      label: 'Nutrition Plans', 
-      action: () => navigation.navigate('NutritionPlanning'),
-      category: 'Wellness'
-    },
-    { 
-      icon: 'support-agent', 
-      label: 'Support Center', 
-      action: () => navigation.navigate('SupportCenter'),
-      category: 'Support'
-    }
-  ];
+const menuOptions = [
+  { 
+    icon: 'search', 
+    label: 'Quick Search', 
+    action: () => setQuickSearchVisible(true),
+    category: 'General'
+  },
+  { 
+    icon: 'analytics', 
+    label: 'Performance Analytics', 
+    action: () => navigation.navigate('PerformanceAnalytics'),
+    category: 'Analytics'
+  },
+  { 
+    icon: 'smart-toy', 
+    label: 'AI Assistant', 
+    action: () => navigation.navigate('AIWorkoutGenerator'),
+    category: 'AI Tools'
+  },
+  // ADD THIS NEW OPTION HERE:
+  { 
+    icon: 'settings', 
+    label: 'AI Settings', 
+    action: () => navigation.navigate('AISettings'),
+    category: 'AI Tools'
+  },
+  // Continue with existing options...
+  { 
+    icon: 'video-library', 
+    label: 'Video Library', 
+    action: () => navigation.navigate('VideoLibrary'),
+    category: 'Content'
+  },
+  { 
+    icon: 'restaurant', 
+    label: 'Nutrition Plans', 
+    action: () => navigation.navigate('NutritionPlanning'),
+    category: 'Wellness'
+  },
+  { 
+    icon: 'support-agent', 
+    label: 'Support Center', 
+    action: () => navigation.navigate('SupportCenter'),
+    category: 'Support'
+  }
+];
 
   const getStatusColor = (status) => {
     switch (status) {

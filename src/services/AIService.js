@@ -1,6 +1,8 @@
+//src/services/AIService.js
 import axios from 'axios';
 import { HfInference } from '@huggingface/inference';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import TensorFlowService from './TensorFlowService';
 
 class AIService {
   constructor() {
@@ -14,14 +16,23 @@ class AIService {
     this.requestQueue = [];
     this.isProcessingQueue = false;
     
-    this.models = {
-      textGeneration: 'google/flan-t5-base',
-      planGeneration: 'google/flan-t5-large',
-      sessionAnalysis: 'microsoft/DialoGPT-medium',
-      summarization: 'facebook/bart-large-cnn',
-      questionAnswering: 'deepset/roberta-base-squad2',
-      sentiment: 'cardiffnlp/twitter-roberta-base-sentiment-latest'
+    // NEW: Multi-service architecture
+    this.servicePriority = 'tensorflow_first'; // tensorflow_first, huggingface_first, balanced
+    this.serviceStatus = {
+      tensorflow: { available: false, initialized: false },
+      huggingface: { available: false, initialized: false },
+      ruleBased: { available: true, initialized: true }
     };
+    
+    // UPDATED: Better model selection for HuggingFace
+    this.models = {
+        textGeneration: 'gpt2',
+        conversation: 'microsoft/DialoGPT-small',
+        summarization: 'facebook/bart-large-cnn',
+        questionAnswering: 'deepset/roberta-base-squad2',
+        sentiment: 'distilbert-base-uncased-finetuned-sst-2-english',
+        embedding: 'sentence-transformers/all-MiniLM-L6-v2'
+      };
     
     this.sportsKnowledge = {
       soccer: {
@@ -61,45 +72,232 @@ class AIService {
     this.initialize();
   }
 
-  async initialize() {
+async initialize() {
+  try {
+    console.log('AIService: Starting multi-service initialization...');
+    
+    // Load stored settings and service priority
+    await this.loadStoredSettings();
+    
+    // PRIORITY 1: Initialize TensorFlow service first (always available)
+    console.log('AIService: Initializing TensorFlow as primary service...');
+    await this.initializeTensorFlowService();
+    
+    // PRIORITY 2: Initialize HuggingFace if API key exists
+    if (this.apiKey) {
+      console.log('AIService: Initializing HuggingFace as secondary service...');
+      await this.initializeHuggingFaceService();
+    } else {
+      console.log('AIService: No HuggingFace API key found, skipping online AI');
+    }
+    
+    // PRIORITY 3: Rule-based is always available as fallback
+    this.serviceStatus.ruleBased = { available: true, initialized: true };
+    
+    this.initialized = true;
+    console.log('AIService: Multi-service initialization complete');
+    
+    return {
+      success: true,
+      services: this.getServiceSummary(),
+      primaryService: this.getPrimaryService(),
+      capabilities: this.getAvailableCapabilities()
+    };
+    
+  } catch (error) {
+    console.error('AIService: Initialization error:', error);
+    this.fallbackMode = true;
+    this.initialized = true;
+    
+    return {
+      success: true, // Continue with fallback
+      services: { ruleBased: true },
+      primaryService: 'ruleBased',
+      error: error.message
+    };
+  }
+}
+
+
+async initializeTensorFlowService() {
+  try {
+    console.log('AIService: Initializing TensorFlow as primary AI service...');
+    const result = await TensorFlowService.initialize();
+    
+    this.serviceStatus.tensorflow = {
+      available: result.success,
+      initialized: result.success,
+      backend: result.backend,
+      modelsLoaded: result.modelsLoaded,
+      capabilities: result.capabilities,
+      isPrimary: true
+    };
+    
+    if (result.success) {
+      console.log('AIService: TensorFlow ready as primary AI service');
+      this.fallbackMode = false; // TensorFlow available, not in fallback
+    } else {
+      console.warn('AIService: TensorFlow initialization failed, will use enhanced fallback');
+      this.serviceStatus.tensorflow.available = false;
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('AIService: TensorFlow initialization failed:', error);
+    this.serviceStatus.tensorflow = { 
+      available: false, 
+      initialized: false, 
+      error: error.message,
+      isPrimary: true
+    };
+  }
+}
+
+  // UPDATED: Better HuggingFace initialization
+  async initializeHuggingFaceService() {
     try {
-      console.log('AIService: Starting initialization...');
-      
-      await this.loadStoredSettings();
+      console.log('AIService: Initializing HuggingFace service...');
       
       if (this.apiKey) {
         this.hfInference = new HfInference(this.apiKey);
-        console.log('AIService: Hugging Face client initialized');
-        await this.validateConnection();
-      } else {
-        console.log('AIService: No API key found, running in fallback mode');
-        this.fallbackMode = true;
+        const isValid = await this.validateHuggingFaceConnection();
+        
+        this.serviceStatus.huggingface = {
+          available: isValid,
+          initialized: isValid,
+          hasApiKey: true
+        };
+        
+        if (isValid) {
+          this.isOnline = true;
+          this.fallbackMode = false;
+          console.log('AIService: HuggingFace service ready');
+        }
       }
-      
-      this.startQueueProcessor();
-      this.initialized = true;
-      console.log('AIService: Initialization complete');
-      
-      return {
-        success: true,
-        mode: this.fallbackMode ? 'intelligent_fallback' : 'online',
-        hasApiKey: !!this.apiKey,
-        capabilities: this.offlineCapabilities,
-        models: Object.keys(this.models)
-      };
-      
     } catch (error) {
-      console.error('AIService: Initialization error:', error);
-      this.fallbackMode = true;
-      this.initialized = true;
-      
-      return {
-        success: true,
-        mode: 'fallback',
-        error: error.message,
-        capabilities: this.offlineCapabilities
-      };
+      console.error('AIService: HuggingFace initialization failed:', error);
+      this.serviceStatus.huggingface = { available: false, initialized: false };
     }
+  }
+
+  // NEW: Validate HuggingFace with reliable models
+async validateHuggingFaceConnection() {
+  try {
+    console.log('AIService: Validating HuggingFace as secondary AI service...');
+    
+    // Test with gpt2 which is more reliable than flan-t5-base
+    const response = await this.hfInference.textGeneration({
+      model: this.models.textGeneration,
+      inputs: 'Test',
+      parameters: {
+        max_length: 10,
+        temperature: 0.1,
+        do_sample: false
+      }
+    });
+    
+    if (response && (response.generated_text !== undefined || response[0]?.generated_text !== undefined)) {
+      this.usageStats.successfulRequests++;
+      await this.saveSettings();
+      console.log('AIService: HuggingFace validated as secondary service');
+      return true;
+    }
+    
+    console.warn('AIService: HuggingFace validation failed - no valid response');
+    return false;
+  } catch (error) {
+    console.warn('AIService: HuggingFace validation failed:', error.message);
+    this.handleAPIError(error);
+    return false;
+  }
+}
+
+getBestServiceForTask(task) {
+  const primaryService = this.getPrimaryService();
+  
+  if (primaryService === 'balanced') {
+    // Task-specific intelligent routing
+    switch (task) {
+      case 'session_enhancement':
+      case 'schedule_optimization':
+      case 'text_classification':
+        // TensorFlow is better for these structured tasks
+        return this.serviceStatus.tensorflow.available ? 'tensorflow' : 'huggingface';
+      
+      case 'text_generation':
+      case 'conversation':
+      case 'creative_content':
+        // HuggingFace is better for generative tasks
+        return this.serviceStatus.huggingface.available ? 'huggingface' : 'tensorflow';
+      
+      case 'coaching_tips':
+      case 'basic_analysis':
+        // Both services work well, prefer TensorFlow for offline capability
+        return this.serviceStatus.tensorflow.available ? 'tensorflow' : 'ruleBased';
+      
+      default:
+        return this.serviceStatus.tensorflow.available ? 'tensorflow' : 'ruleBased';
+    }
+  }
+  
+  return primaryService;
+}
+
+  // NEW: Service priority management
+  async setServicePriority(priority) {
+    this.servicePriority = priority;
+    await AsyncStorage.setItem('ai_service_priority', priority);
+    console.log(`AIService: Priority set to ${priority}`);
+  }
+
+  // NEW: Get primary service based on availability and priority
+  getPrimaryService() {
+    switch (this.servicePriority) {
+      case 'tensorflow_first':
+        if (this.serviceStatus.tensorflow.available) return 'tensorflow';
+        if (this.serviceStatus.huggingface.available) return 'huggingface';
+        return 'ruleBased';
+      
+      case 'huggingface_first':
+        if (this.serviceStatus.huggingface.available) return 'huggingface';
+        if (this.serviceStatus.tensorflow.available) return 'tensorflow';
+        return 'ruleBased';
+      
+      case 'balanced':
+        // Use the best service for the task
+        if (this.serviceStatus.tensorflow.available && this.serviceStatus.huggingface.available) {
+          return 'balanced'; // Will choose per task
+        }
+        if (this.serviceStatus.tensorflow.available) return 'tensorflow';
+        if (this.serviceStatus.huggingface.available) return 'huggingface';
+        return 'ruleBased';
+      
+      default:
+        return 'ruleBased';
+    }
+  }
+
+  // NEW: Choose best service for specific task
+  getBestServiceForTask(task) {
+    const primaryService = this.getPrimaryService();
+    
+    if (primaryService === 'balanced') {
+      // Task-specific routing
+      switch (task) {
+        case 'session_enhancement':
+        case 'schedule_optimization':
+          return this.serviceStatus.tensorflow.available ? 'tensorflow' : 'huggingface';
+        
+        case 'text_generation':
+        case 'conversation':
+          return this.serviceStatus.huggingface.available ? 'huggingface' : 'tensorflow';
+        
+        default:
+          return this.serviceStatus.tensorflow.available ? 'tensorflow' : 'ruleBased';
+      }
+    }
+    
+    return primaryService;
   }
 
   async loadStoredSettings() {
@@ -164,22 +362,147 @@ class AIService {
     }
   }
 
-  async setApiKey(apiKey) {
+async setApiKey(apiKey, testModel = null) {
     try {
+      // Validate API key format
+      if (!apiKey || !apiKey.startsWith('hf_')) {
+        throw new Error('Invalid Hugging Face API key format. Should start with "hf_"');
+      }
+
       await AsyncStorage.setItem('huggingface_api_key', apiKey);
       this.apiKey = apiKey;
       this.hfInference = new HfInference(apiKey);
       
-      const isValid = await this.validateConnection();
+      // Test with specified model or default reliable model
+      const modelToTest = testModel || this.models.textGeneration;
+      const isValid = await this.testConnection(modelToTest, apiKey);
+      
+      if (isValid.success) {
+        this.fallbackMode = false;
+        this.isOnline = true;
+        this.serviceStatus.huggingface = { 
+          available: true, 
+          initialized: true, 
+          hasApiKey: true 
+        };
+        
+        console.log('AIService: HuggingFace API key validated and online mode activated');
+      }
       
       return { 
-        success: isValid, 
-        message: isValid ? 'API key validated successfully' : 'API key validation failed'
+        success: isValid.success, 
+        message: isValid.success ? 
+          'API key validated successfully - HuggingFace features now available alongside TensorFlow' : 
+          'API key validation failed - check your token'
       };
+    } catch (error) {
+      console.error('API key setup failed:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // NEW: Test connection with specific model
+  async testConnection(modelName, apiKey) {
+    try {
+      const testInference = new HfInference(apiKey);
+      
+      const response = await testInference.textGeneration({
+        model: modelName,
+        inputs: 'Test',
+        parameters: {
+          max_length: 10,
+          temperature: 0.1,
+          do_sample: false
+        }
+      });
+      
+      if (response && (response.generated_text !== undefined || response[0]?.generated_text !== undefined)) {
+        return {
+          success: true,
+          model: modelName,
+          response: response.generated_text || response[0]?.generated_text || 'Success'
+        };
+      }
+      
+      return { success: false, error: 'No valid response received' };
     } catch (error) {
       return { success: false, error: error.message };
     }
   }
+
+// Add this new public method right after setApiKey
+async clearApiKey() {
+  try {
+    await AsyncStorage.removeItem('huggingface_api_key');
+    this.apiKey = null;
+    this.hfInference = null;
+    this.isOnline = false;
+    this.fallbackMode = true;
+    console.log('AIService: API key cleared, switched to offline mode');
+    return { success: true, message: 'API key cleared - using offline mode' };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+// Add this method to check current status
+getApiStatus() {
+  const primaryService = this.getPrimaryService();
+  const servicesAvailable = Object.values(this.serviceStatus).filter(s => s.available).length;
+  
+  return {
+    hasApiKey: !!this.apiKey,
+    isOnline: this.isOnline,
+    mode: this.fallbackMode ? 'offline-first' : 'hybrid',
+    provider: this.getProviderInfo(),
+    services: this.serviceStatus,
+    primaryService: primaryService,
+    servicePriority: this.servicePriority,
+    servicesAvailable: servicesAvailable,
+    aiCapability: servicesAvailable > 1 ? 'enhanced' : servicesAvailable === 1 ? 'basic' : 'minimal',
+    offlineCapable: this.serviceStatus.tensorflow?.available || this.serviceStatus.ruleBased?.available
+  };
+}
+
+  // NEW: Get provider information
+  getProviderInfo() {
+    const providers = [];
+    if (this.serviceStatus.tensorflow.available) providers.push('tensorflow');
+    if (this.serviceStatus.huggingface.available) providers.push('huggingface');
+    if (this.serviceStatus.ruleBased.available) providers.push('rule-based');
+    return providers.join(' + ');
+  }
+
+  // NEW: Get service summary
+  getServiceSummary() {
+    return {
+      tensorflow: this.serviceStatus.tensorflow.available,
+      huggingface: this.serviceStatus.huggingface.available,
+      ruleBased: this.serviceStatus.ruleBased.available,
+      total: Object.values(this.serviceStatus).filter(s => s.available).length
+    };
+  }
+
+  // NEW: Get available capabilities
+  getAvailableCapabilities() {
+    const capabilities = { ...this.offlineCapabilities };
+    
+    if (this.serviceStatus.tensorflow.available) {
+      capabilities.localAI = true;
+      capabilities.fastInference = true;
+      capabilities.offlineAI = true;
+    }
+    
+    if (this.serviceStatus.huggingface.available) {
+      capabilities.advancedAI = true;
+      capabilities.textGeneration = true;
+      capabilities.conversationAI = true;
+    }
+    
+    return capabilities;
+  }
+
+
 
   // Add this method to your AIService class (in AIService.js)
 
@@ -526,23 +849,56 @@ getSessionEquipment(sport) {
 // 2. Add this method to AIService.js to support single session improvement
 
 async improveSingleSession(sessionData, userProfile = {}) {
-  if (!this.initialized) {
-    await this.initialize();
-  }
+    if (!this.initialized) {
+      await this.initialize();
+    }
 
-  try {
-    console.log('AIService: Improving single session with AI');
-    
-    if (this.isOnline && !this.fallbackMode) {
-      return await this.improveSingleSessionWithHuggingFace(sessionData, userProfile);
-    } else {
+    try {
+      console.log('AIService: Improving single session with service routing');
+      const bestService = this.getBestServiceForTask('session_enhancement');
+      
+      switch (bestService) {
+        case 'tensorflow':
+          return await this.improveSingleSessionWithTensorFlow(sessionData, userProfile);
+        
+        case 'huggingface':
+          return await this.improveSingleSessionWithHuggingFace(sessionData, userProfile);
+        
+        default:
+          return await this.improveSingleSessionWithFallback(sessionData, userProfile);
+      }
+    } catch (error) {
+      console.error('AIService: Single session improvement error:', error);
       return await this.improveSingleSessionWithFallback(sessionData, userProfile);
     }
-  } catch (error) {
-    console.error('AIService: Single session improvement error:', error);
-    return await this.improveSingleSessionWithFallback(sessionData, userProfile);
   }
-}
+
+  // NEW: TensorFlow-based single session improvement
+  async improveSingleSessionWithTensorFlow(sessionData, userProfile) {
+    try {
+      console.log('AIService: Using TensorFlow for single session improvement');
+      
+      const tfResult = await TensorFlowService.enhanceSession(sessionData, userProfile);
+      
+      return {
+        originalSession: sessionData,
+        enhancedSession: {
+          ...sessionData,
+          title: sessionData.title + ' (AI Enhanced)',
+          ...tfResult.enhancedSession,
+          aiEnhanced: true,
+          aiProvider: 'tensorflow',
+          enhancedAt: new Date().toISOString()
+        },
+        improvements: tfResult.improvements || [],
+        confidence: tfResult.confidence || 0.85
+      };
+      
+    } catch (error) {
+      console.warn('TensorFlow single session improvement failed:', error);
+      throw error; // Let it fallback to rule-based
+    }
+  }
 
 // Add these missing helper methods to your AIService class
 
@@ -759,24 +1115,92 @@ async improveSingleSessionWithFallback(sessionData, userProfile) {
 
   // ============= SESSION ENHANCEMENT =============
 
-  async enhanceExtractedSessions(sessions, userProfile = {}) {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+async enhanceExtractedSessions(sessions, userProfile = {}) {
+  if (!this.initialized) {
+    await this.initialize();
+  }
 
-    try {
-      console.log('AIService: Enhancing sessions');
+  try {
+    console.log('AIService: Enhancing sessions with intelligent service routing');
+    const bestService = this.getBestServiceForTask('session_enhancement');
+    
+    console.log(`AIService: Using ${bestService} service for session enhancement`);
+    
+    switch (bestService) {
+      case 'tensorflow':
+        console.log('AIService: Enhancing with TensorFlow (primary offline AI)');
+        return await this.enhanceWithTensorFlow(sessions, userProfile);
       
-      if (this.isOnline && !this.fallbackMode) {
+      case 'huggingface':
+        console.log('AIService: Enhancing with HuggingFace (secondary online AI)');
         return await this.enhanceWithHuggingFace(sessions, userProfile);
-      } else {
+      
+      default:
+        console.log('AIService: Enhancing with rule-based algorithms (fallback)');
         return await this.enhanceWithAdvancedFallback(sessions, userProfile);
-      }
-    } catch (error) {
-      console.error('AIService: Session enhancement error:', error);
-      this.usageStats.failedRequests++;
-      return await this.enhanceWithAdvancedFallback(sessions, userProfile);
     }
+  } catch (error) {
+    console.error('AIService: Session enhancement error:', error);
+    console.log('AIService: Falling back to rule-based enhancement');
+    return await this.enhanceWithAdvancedFallback(sessions, userProfile);
+  }
+}
+
+  // NEW: TensorFlow-based session enhancement
+  async enhanceWithTensorFlow(sessions, userProfile) {
+    console.log('AIService: Using TensorFlow for session enhancement');
+    
+    const enhancedSessions = [];
+    
+    for (const weekSession of sessions) {
+      try {
+        const tfEnhancement = await TensorFlowService.enhanceSession(weekSession, userProfile);
+        
+        const enhanced = {
+          ...weekSession,
+          aiEnhanced: true,
+          aiProvider: 'tensorflow',
+          aiConfidence: tfEnhancement.confidence,
+          aiEnhancements: tfEnhancement.improvements,
+          dailySessions: weekSession.dailySessions.map(session => 
+            this.applyTensorFlowEnhancements(session, tfEnhancement, userProfile)
+          ),
+          processedAt: new Date().toISOString()
+        };
+        
+        enhancedSessions.push(enhanced);
+        
+      } catch (error) {
+        console.warn(`TensorFlow enhancement failed for week ${weekSession.weekNumber}, using fallback:`, error);
+        const fallbackEnhanced = await this.enhanceWeekWithAdvancedFallback(weekSession, userProfile);
+        enhancedSessions.push(fallbackEnhanced);
+      }
+    }
+    
+    this.usageStats.tensorflowInferences = (this.usageStats.tensorflowInferences || 0) + sessions.length;
+    await this.saveSettings();
+    
+    return enhancedSessions;
+  }
+
+  // NEW: Apply TensorFlow enhancements to individual sessions
+  applyTensorFlowEnhancements(session, tfEnhancement, userProfile) {
+    return {
+      ...session,
+      aiEnhanced: true,
+      aiProvider: 'tensorflow',
+      aiSuggestions: tfEnhancement.improvements || {},
+      enhancedAt: new Date().toISOString(),
+      
+      // Apply TensorFlow-specific improvements
+      duration: tfEnhancement.enhancedSession?.duration || session.duration,
+      structure: tfEnhancement.enhancedSession?.structure || session.structure,
+      safetyTips: tfEnhancement.enhancedSession?.safety || [],
+      coachingTips: tfEnhancement.enhancedSession?.coachingTips || [],
+      
+      // Keep original data for reference
+      originalSession: session
+    };
   }
 
   async enhanceWithHuggingFace(sessions, userProfile) {

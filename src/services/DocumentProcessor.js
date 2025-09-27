@@ -1628,7 +1628,7 @@ async analyzeDocumentWithAI(text, document, options = {}) {
     const basicPlan = await this.parseTrainingPlanContent(text, document, options);
     
     // Then enhance with AI if available
-    const aiAnalysis = await this.performAIDocumentAnalysis(text);
+    const aiAnalysis = await AIService.analyzeDocumentText(text, document);
     
     // Merge AI insights with basic plan
     const enhancedPlan = {
