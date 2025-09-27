@@ -209,7 +209,8 @@ const AISettingsScreen = ({ navigation }) => {
       'distilbert-base-uncased-finetuned-sst-2-english',
       'sentence-transformers/all-MiniLM-L6-v2',
       'gpt2',
-      'facebook/bart-large-cnn'
+      'facebook/bart-large-cnn',
+      'facebook/blenderbot-400M-distill'
     ];
     
     const availableModels = [];
