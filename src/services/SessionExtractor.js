@@ -26,47 +26,50 @@ class SessionExtractor {
   }
 
 // Main extraction method
+// Replace the existing extractSessionsFromDocument method in SessionExtractor.js
 async extractSessionsFromDocument(document, trainingPlan) {
   try {
-    PlatformUtils.logDebugInfo('Starting AI-enhanced session extraction', {
+    PlatformUtils.logDebugInfo('Starting enhanced AI session extraction', {
       documentId: document.id,
       planId: trainingPlan.id
     });
 
-    // Your existing extraction logic...
+    // Get DocumentProcessor and extract text
     const DocumentProcessor = (await import('./DocumentProcessor')).default;
     const extractionResult = await DocumentProcessor.extractDocumentText(document);
     const text = extractionResult.text;
 
-    const documentStructure = this.parseDocumentStructure(text);
-    const academyInfo = this.extractAcademyInfo(text, trainingPlan);
-    const sessions = this.extractWeeklySessions(text, documentStructure, academyInfo);
+    // NEW: Enhanced document structure analysis
+    const structureAnalysis = await DocumentProcessor.analyzeDocumentStructure(text, document);
     
-    // NEW: AI Enhancement with smarter scheduling
+    console.log('Enhanced structure analysis:', structureAnalysis);
+
+    // Extract academy info with structure context
+    const academyInfo = this.extractAcademyInfo(text, trainingPlan, structureAnalysis);
+    
+    // NEW: Smart session extraction based on structure
+    const sessions = await this.extractSessionsWithStructureAwareness(text, structureAnalysis, academyInfo);
+    
+    // AI Enhancement with structure context
     let enhancedSessions = sessions;
     try {
       enhancedSessions = await AIService.enhanceExtractedSessions(sessions, {
         ageGroup: academyInfo.ageGroup,
         sport: academyInfo.sport,
-        experience: trainingPlan.difficulty || 'beginner'
+        experience: trainingPlan.difficulty || 'beginner',
+        structureContext: structureAnalysis
       });
-      console.log('Sessions enhanced with AI successfully');
+      console.log('Sessions enhanced with AI and structure awareness');
     } catch (error) {
-      console.warn('AI enhancement failed, using basic sessions:', error);
+      console.warn('AI enhancement failed, using structure-aware sessions:', error);
     }
 
-    // NEW: Generate optimal schedule for sessions
+    // Generate optimal schedule with structure insights
     let optimizedSchedule = null;
     try {
-      const schedulePreferences = {
-        availableDays: ['monday', 'wednesday', 'friday'],
-        preferredTime: '16:00',
-        sessionDuration: 90,
-        intensity: trainingPlan.difficulty || 'moderate'
-      };
-      
+      const schedulePreferences = this.deriveSchedulePreferences(structureAnalysis);
       optimizedSchedule = await AIService.generateOptimalSchedule(trainingPlan, schedulePreferences);
-      console.log('Optimal schedule generated with AI');
+      console.log('Structure-aware schedule generated');
     } catch (error) {
       console.warn('Schedule generation failed:', error);
     }
@@ -74,28 +77,805 @@ async extractSessionsFromDocument(document, trainingPlan) {
     const result = {
       academyInfo,
       sessions: enhancedSessions,
-      optimizedSchedule, // NEW: AI-generated schedule
+      optimizedSchedule,
+      structureAnalysis, // NEW: Include structure analysis
       totalWeeks: enhancedSessions.length,
       totalSessions: enhancedSessions.reduce((sum, week) => sum + week.dailySessions.length, 0),
       extractedAt: new Date().toISOString(),
       sourceDocument: document.id,
       sourcePlan: trainingPlan.id,
-      aiEnhanced: enhancedSessions !== sessions, // Only true if AI enhancement worked
-      aiScheduled: !!optimizedSchedule // Only true if schedule was generated
+      aiEnhanced: enhancedSessions !== sessions,
+      aiScheduled: !!optimizedSchedule,
+      structureAware: true // NEW: Flag for structure-aware extraction
     };
 
-    PlatformUtils.logDebugInfo('AI-enhanced session extraction completed', {
+    PlatformUtils.logDebugInfo('Enhanced session extraction completed', {
       totalWeeks: result.totalWeeks,
       totalSessions: result.totalSessions,
+      structureLevel: structureAnalysis.organizationLevel.level,
       aiEnhanced: result.aiEnhanced,
-      aiScheduled: result.aiScheduled
+      structureAware: result.structureAware
     });
 
     return result;
   } catch (error) {
-    console.error('Session extraction failed:', error);
-    throw PlatformUtils.handlePlatformError(error, 'AI-Enhanced Session Extraction');
+    console.error('Enhanced session extraction failed:', error);
+    throw PlatformUtils.handlePlatformError(error, 'Enhanced Session Extraction');
   }
+}
+
+// NEW: Structure-aware session extraction
+async extractSessionsWithStructureAwareness(text, structureAnalysis, academyInfo) {
+  console.log('Starting structure-aware session extraction');
+  
+  const { organizationLevel, weekStructure, dayStructure, sessionStructure } = structureAnalysis;
+  
+  // Choose extraction strategy based on structure level
+  switch (organizationLevel.level) {
+    case 'highly_structured':
+      return this.extractFromHighlyStructuredDocument(text, structureAnalysis, academyInfo);
+    
+    case 'moderately_structured':
+      return this.extractFromModeratelyStructuredDocument(text, structureAnalysis, academyInfo);
+    
+    case 'basic_structure':
+      return this.extractFromBasicStructuredDocument(text, structureAnalysis, academyInfo);
+    
+    default:
+      return this.extractFromUnstructuredDocument(text, structureAnalysis, academyInfo);
+  }
+}
+
+// NEW: Extraction for highly structured documents
+extractFromHighlyStructuredDocument(text, structureAnalysis, academyInfo) {
+  const { weekStructure, dayStructure, durationAnalysis } = structureAnalysis;
+  const sessions = [];
+  
+  console.log(`Extracting from highly structured document: ${weekStructure.totalWeeks} weeks identified`);
+  
+  // Split text by weeks
+  const weekSections = this.splitTextByWeeks(text, weekStructure);
+  
+  weekSections.forEach((weekSection, weekIndex) => {
+    const weekNumber = weekStructure.identifiedWeeks[weekIndex] || (weekIndex + 1);
+    
+    const weekSession = {
+      id: `week_${weekNumber}_${Date.now()}`,
+      weekNumber: weekNumber,
+      title: this.extractWeekTitle(weekSection.content, weekNumber),
+      description: this.extractWeekDescription(weekSection.content),
+      dailySessions: [],
+      totalDuration: 0,
+      focus: this.extractWeekFocus(weekSection.content),
+      notes: [],
+      academyName: academyInfo.academyName,
+      sport: academyInfo.sport,
+      weekSchedule: this.extractWeekScheduleFromStructure(weekSection.content, dayStructure)
+    };
+
+    // Extract daily sessions within this week
+    const dailySessions = this.extractDailySessionsFromWeekSection(weekSection, weekNumber, academyInfo, durationAnalysis);
+    weekSession.dailySessions = dailySessions;
+    weekSession.totalDuration = dailySessions.reduce((sum, session) => sum + session.duration, 0);
+
+    sessions.push(weekSession);
+  });
+  
+  return sessions;
+}
+
+// NEW: Extraction for moderately structured documents
+extractFromModeratelyStructuredDocument(text, structureAnalysis, academyInfo) {
+  const { weekStructure, sessionStructure, durationAnalysis } = structureAnalysis;
+  const sessions = [];
+  
+  console.log(`Extracting from moderately structured document`);
+  
+  if (weekStructure.totalWeeks > 0) {
+    // Has week structure but maybe not perfect
+    return this.extractWithPartialWeekStructure(text, structureAnalysis, academyInfo);
+  } else if (sessionStructure.hasStructuredSessions) {
+    // Has session structure but no weeks
+    return this.extractWithSessionStructure(text, structureAnalysis, academyInfo);
+  } else {
+    // Fall back to basic extraction
+    return this.extractFromBasicStructuredDocument(text, structureAnalysis, academyInfo);
+  }
+}
+
+// NEW: Helper methods for structure-aware extraction
+splitTextByWeeks(text, weekStructure) {
+  const weekSections = [];
+  const weekTitles = weekStructure.weekTitles.sort((a, b) => a.position - b.position);
+  
+  for (let i = 0; i < weekTitles.length; i++) {
+    const startPos = weekTitles[i].position;
+    const endPos = i + 1 < weekTitles.length ? weekTitles[i + 1].position : text.length;
+    
+    weekSections.push({
+      weekNumber: weekTitles[i].number,
+      title: weekTitles[i].title,
+      content: text.substring(startPos, endPos),
+      startPosition: startPos,
+      endPosition: endPos
+    });
+  }
+  
+  return weekSections;
+}
+
+extractDailySessionsFromWeekSection(weekSection, weekNumber, academyInfo, durationAnalysis) {
+  const dailySessions = [];
+  const content = weekSection.content;
+  
+  // Look for daily patterns within this week section
+  const dayPatterns = [
+    /(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/gi,
+    /day\s*(\d+)/gi,
+    /(session\s*\d+)/gi
+  ];
+  
+  const foundDays = [];
+  dayPatterns.forEach(pattern => {
+    let match;
+    while ((match = pattern.exec(content)) !== null) {
+      foundDays.push({
+        day: match[1] || match[0],
+        position: match.index,
+        fullMatch: match[0]
+      });
+    }
+  });
+  
+  // Create sessions for found days
+  foundDays.forEach((dayInfo, index) => {
+    const session = this.createStructuredDailySession(
+      dayInfo, 
+      weekNumber, 
+      index + 1, 
+      academyInfo,
+      content,
+      durationAnalysis
+    );
+    dailySessions.push(session);
+  });
+  
+  // If no specific days found, create a general week session
+  if (dailySessions.length === 0) {
+    const generalSession = this.createGeneralWeekSession(weekSection, weekNumber, academyInfo);
+    dailySessions.push(generalSession);
+  }
+  
+  return dailySessions;
+}
+
+createStructuredDailySession(dayInfo, weekNumber, dayIndex, academyInfo, content, durationAnalysis) {
+  const dayName = this.normalizeDayName(dayInfo.day);
+  const sessionDate = this.calculateSessionDate(weekNumber, dayName);
+  
+  // Extract duration for this specific session
+  const sessionDuration = this.extractSessionDuration(content, dayInfo, durationAnalysis);
+  
+  return {
+    id: `session_${weekNumber}_${dayIndex}_${Date.now()}`,
+    weekNumber: weekNumber,
+    dayNumber: dayIndex,
+    title: `${academyInfo.academyName} - Week ${weekNumber}, ${this.capitalizeFirst(dayName)} Training`,
+    day: dayName,
+    date: sessionDate,
+    time: this.extractSessionTime(content, dayInfo) || '08:00',
+    duration: sessionDuration,
+    location: academyInfo.location || 'Training Field',
+    type: this.identifySessionType(content, dayInfo),
+    participants: this.estimateParticipants(academyInfo.ageGroup),
+    status: 'scheduled',
+    academyName: academyInfo.academyName,
+    sport: academyInfo.sport,
+    ageGroup: academyInfo.ageGroup,
+    difficulty: academyInfo.difficulty,
+    activities: this.extractActivitiesFromSection(content, dayInfo),
+    drills: this.extractDrillsFromSection(content, dayInfo),
+    objectives: this.extractObjectivesFromSection(content, dayInfo),
+    equipment: this.extractEquipmentFromSection(content, dayInfo),
+    notes: this.extractNotesFromSection(content, dayInfo),
+    rawContent: content,
+    documentContent: this.extractRelevantContent(content, dayInfo),
+    completionRate: 0,
+    focus: this.extractSessionFocus(content, dayInfo),
+    week: `Week ${weekNumber}`,
+    weekDescription: content.substring(0, 200)
+  };
+}
+
+// NEW: Derive schedule preferences from structure analysis
+deriveSchedulePreferences(structureAnalysis) {
+  const { dayStructure, durationAnalysis, schedulePattern } = structureAnalysis;
+  
+  const preferences = {
+    availableDays: ['monday', 'wednesday', 'friday'], // default
+    preferredTime: '16:00',
+    sessionDuration: 90,
+    intensity: 'moderate'
+  };
+  
+  // Override with document insights
+  if (dayStructure.identifiedDays.length > 0) {
+    preferences.availableDays = dayStructure.identifiedDays;
+  }
+  
+  if (durationAnalysis.averageDuration) {
+    preferences.sessionDuration = durationAnalysis.averageDuration;
+  }
+  
+  if (schedulePattern.recommendedFrequency) {
+    // Adjust available days based on frequency
+    const frequency = schedulePattern.recommendedFrequency;
+    if (frequency <= 2) {
+      preferences.availableDays = ['monday', 'thursday'];
+    } else if (frequency === 3) {
+      preferences.availableDays = ['monday', 'wednesday', 'friday'];
+    } else if (frequency >= 4) {
+      preferences.availableDays = ['monday', 'tuesday', 'thursday', 'friday'];
+    }
+  }
+  
+  return preferences;
+}
+
+// Additional helper methods
+normalizeDayName(dayText) {
+  const dayMap = {
+    'mon': 'monday', 'tue': 'tuesday', 'wed': 'wednesday',
+    'thu': 'thursday', 'fri': 'friday', 'sat': 'saturday', 'sun': 'sunday'
+  };
+  
+  const lower = dayText.toLowerCase();
+  return dayMap[lower] || lower;
+}
+
+extractSessionDuration(content, dayInfo, durationAnalysis) {
+  // Look for duration near this day mention
+  const nearbyText = content.substring(
+    Math.max(0, dayInfo.position - 100),
+    Math.min(content.length, dayInfo.position + 200)
+  );
+  
+  const durationMatch = nearbyText.match(/(\d+)\s*(minutes?|mins?|hours?|hrs?)/i);
+  if (durationMatch) {
+    const value = parseInt(durationMatch[1]);
+    const unit = durationMatch[2].toLowerCase();
+    return unit.includes('hour') ? value * 60 : value;
+  }
+  
+  // Fall back to average duration
+  return durationAnalysis.averageDuration || 90;
+}
+
+extractSessionTime(content, dayInfo) {
+  // Look for time near this day mention
+  const nearbyText = content.substring(
+    Math.max(0, dayInfo.position - 50),
+    Math.min(content.length, dayInfo.position + 100)
+  );
+  
+  const timeMatch = nearbyText.match(/(\d{1,2}):(\d{2})|(\d{1,2})\s*(am|pm)/i);
+  if (timeMatch) {
+    if (timeMatch[1] && timeMatch[2]) {
+      return `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`;
+    } else if (timeMatch[3] && timeMatch[4]) {
+      let hour = parseInt(timeMatch[3]);
+      if (timeMatch[4].toLowerCase() === 'pm' && hour !== 12) {
+        hour += 12;
+      } else if (timeMatch[4].toLowerCase() === 'am' && hour === 12) {
+        hour = 0;
+      }
+      return `${hour.toString().padStart(2, '0')}:00`;
+    }
+  }
+  
+  return null;
+}
+
+identifySessionType(content, dayInfo) {
+  const nearbyText = content.substring(
+    Math.max(0, dayInfo.position - 100),
+    Math.min(content.length, dayInfo.position + 200)
+  ).toLowerCase();
+  
+  if (nearbyText.includes('warm')) return 'Warm-up Session';
+  if (nearbyText.includes('technical')) return 'Technical Training';
+  if (nearbyText.includes('tactical')) return 'Tactical Training';
+  if (nearbyText.includes('conditioning')) return 'Conditioning';
+  if (nearbyText.includes('match') || nearbyText.includes('game')) return 'Match/Game';
+  
+  return 'Team Training';
+}
+
+extractActivitiesFromSection(content, dayInfo) {
+  const activities = [];
+  const nearbyText = content.substring(
+    Math.max(0, dayInfo.position - 50),
+    Math.min(content.length, dayInfo.position + 300)
+  );
+  
+  const lines = nearbyText.split('\n');
+  lines.forEach(line => {
+    if (this.isActivity(line.trim())) {
+      activities.push(line.trim());
+    }
+  });
+  
+  return activities.slice(0, 5);
+}
+
+extractRelevantContent(content, dayInfo) {
+  return content.substring(
+    Math.max(0, dayInfo.position - 100),
+    Math.min(content.length, dayInfo.position + 500)
+  );
+}
+
+// NEW: Extract from documents with partial week structure
+extractWithPartialWeekStructure(text, structureAnalysis, academyInfo) {
+  const { weekStructure } = structureAnalysis;
+  const sessions = [];
+  
+  // Fill in missing weeks if we have some but not all
+  const maxWeek = weekStructure.totalWeeks || 12;
+  
+  for (let weekNum = 1; weekNum <= maxWeek; weekNum++) {
+    const hasExplicitWeek = weekStructure.identifiedWeeks.includes(weekNum);
+    
+    const weekSession = {
+      id: `week_${weekNum}_partial_${Date.now()}`,
+      weekNumber: weekNum,
+      title: hasExplicitWeek ? 
+        this.findWeekTitle(text, weekNum) : 
+        `Week ${weekNum} Training`,
+      description: hasExplicitWeek ?
+        this.extractWeekContentByNumber(text, weekNum) :
+        this.generateWeekDescription(weekNum, academyInfo),
+      dailySessions: [],
+      totalDuration: 0,
+      focus: hasExplicitWeek ?
+        this.extractWeekFocusByNumber(text, weekNum) :
+        this.generateWeekFocus(weekNum, academyInfo.sport),
+      academyName: academyInfo.academyName,
+      sport: academyInfo.sport
+    };
+
+    // Create sessions for this week
+    const dailySessions = hasExplicitWeek ?
+      this.extractSessionsForSpecificWeek(text, weekNum, academyInfo) :
+      this.generateDefaultWeekSessions(weekNum, academyInfo);
+    
+    weekSession.dailySessions = dailySessions;
+    weekSession.totalDuration = dailySessions.reduce((sum, s) => sum + s.duration, 0);
+    
+    sessions.push(weekSession);
+  }
+  
+  return sessions;
+}
+
+// NEW: Extract from session-structured documents
+extractWithSessionStructure(text, structureAnalysis, academyInfo) {
+  const { sessionStructure } = structureAnalysis;
+  const sessions = [];
+  
+  // Group sessions into weeks (assume 3 sessions per week)
+  const sessionsPerWeek = 3;
+  const totalSessions = sessionStructure.totalSessions;
+  const totalWeeks = Math.ceil(totalSessions / sessionsPerWeek);
+  
+  for (let weekNum = 1; weekNum <= totalWeeks; weekNum++) {
+    const startSessionIndex = (weekNum - 1) * sessionsPerWeek;
+    const endSessionIndex = Math.min(startSessionIndex + sessionsPerWeek, totalSessions);
+    
+    const weekSessions = sessionStructure.sessionDetails
+      .slice(startSessionIndex, endSessionIndex)
+      .map((sessionDetail, index) => 
+        this.createSessionFromDetail(sessionDetail, weekNum, index + 1, academyInfo)
+      );
+    
+    const weekSession = {
+      id: `week_${weekNum}_sessions_${Date.now()}`,
+      weekNumber: weekNum,
+      title: `Week ${weekNum} Training Sessions`,
+      description: `Training week with ${weekSessions.length} structured sessions`,
+      dailySessions: weekSessions,
+      totalDuration: weekSessions.reduce((sum, s) => sum + s.duration, 0),
+      focus: this.deriveWeekFocusFromSessions(weekSessions),
+      academyName: academyInfo.academyName,
+      sport: academyInfo.sport
+    };
+    
+    sessions.push(weekSession);
+  }
+  
+  return sessions;
+}
+
+// Additional helper methods for new functionality
+findWeekTitle(text, weekNumber) {
+  const weekPattern = new RegExp(`week\\s*${weekNumber}[^\\n]*`, 'gi');
+  const match = text.match(weekPattern);
+  return match ? match[0] : `Week ${weekNumber}`;
+}
+
+extractWeekContentByNumber(text, weekNumber) {
+  const weekStart = text.search(new RegExp(`week\\s*${weekNumber}`, 'gi'));
+  if (weekStart === -1) return '';
+  
+  const nextWeekStart = text.search(new RegExp(`week\\s*${weekNumber + 1}`, 'gi'));
+  const endPos = nextWeekStart === -1 ? weekStart + 500 : nextWeekStart;
+  
+  return text.substring(weekStart, endPos).substring(0, 200);
+}
+
+generateWeekDescription(weekNumber, academyInfo) {
+  const progressionMap = {
+    1: 'Foundation building and basic skill introduction',
+    2: 'Skill development and coordination improvement',
+    3: 'Technique refinement and tactical awareness',
+    4: 'Integration of skills in game situations'
+  };
+  
+  const baseDescription = progressionMap[weekNumber % 4 || 4];
+  return `${baseDescription} for ${academyInfo.sport} training`;
+}
+
+generateWeekFocus(weekNumber, sport) {
+  const sportFocusMap = {
+    soccer: ['ball control', 'passing', 'shooting', 'defending'],
+    basketball: ['dribbling', 'shooting', 'defense', 'teamwork'],
+    tennis: ['serves', 'groundstrokes', 'volleys', 'strategy']
+  };
+  
+  const focuses = sportFocusMap[sport] || ['technique', 'fitness', 'tactics', 'teamwork'];
+  return [focuses[(weekNumber - 1) % focuses.length]];
+}
+
+createSessionFromDetail(sessionDetail, weekNumber, dayNumber, academyInfo) {
+  return {
+    id: `session_${weekNumber}_${dayNumber}_detail_${Date.now()}`,
+    weekNumber: weekNumber,
+    dayNumber: dayNumber,
+    title: `${academyInfo.academyName} - ${sessionDetail.text}`,
+    day: this.mapSessionToDay(dayNumber),
+    date: this.calculateSessionDate(weekNumber, this.mapSessionToDay(dayNumber)),
+    time: '08:00',
+    duration: 90,
+    location: academyInfo.location || 'Training Field',
+    type: sessionDetail.type,
+    participants: this.estimateParticipants(academyInfo.ageGroup),
+    status: 'scheduled',
+    academyName: academyInfo.academyName,
+    sport: academyInfo.sport,
+    ageGroup: academyInfo.ageGroup,
+    difficulty: academyInfo.difficulty,
+    activities: [sessionDetail.text],
+    focus: [sessionDetail.type],
+    rawContent: sessionDetail.text
+  };
+}
+
+mapSessionToDay(dayNumber) {
+  const dayMap = ['monday', 'wednesday', 'friday', 'tuesday', 'thursday', 'saturday', 'sunday'];
+  return dayMap[dayNumber - 1] || 'monday';
+}
+
+// Add these missing methods to SessionExtractor.js
+
+extractWeekTitle(content, weekNumber) {
+  const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+  
+  // Look for the week header line
+  for (const line of lines.slice(0, 5)) { // Check first 5 lines
+    if (line.toLowerCase().includes(`week ${weekNumber}`) || 
+        line.toLowerCase().includes(`week${weekNumber}`)) {
+      // Clean up the title
+      return line
+        .replace(/^week\s*\d+[:\-–—]?\s*/i, '')
+        .replace(/[:\-–—]/g, '')
+        .trim() || `Week ${weekNumber} Training`;
+    }
+  }
+  
+  return `Week ${weekNumber} Training`;
+}
+
+extractWeekDescription(content) {
+  const lines = content.split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 20 && !this.isHeaderLine(line));
+  
+  // Take first 2-3 meaningful lines as description
+  const descriptionLines = lines.slice(0, 3);
+  const description = descriptionLines.join(' ').substring(0, 200);
+  
+  return description || 'Training week focused on skill development and physical conditioning.';
+}
+
+extractWeekFocus(content) {
+  const focusKeywords = [
+    'shooting', 'passing', 'dribbling', 'defending', 'tactics', 
+    'fitness', 'conditioning', 'technique', 'teamwork', 'strategy',
+    'coordination', 'agility', 'strength', 'endurance', 'flexibility'
+  ];
+  
+  const lowerContent = content.toLowerCase();
+  const foundFocus = focusKeywords.filter(keyword => 
+    lowerContent.includes(keyword)
+  );
+  
+  return foundFocus.slice(0, 3);
+}
+
+extractWeekScheduleFromStructure(content, dayStructure) {
+  const schedule = [];
+  
+  if (dayStructure.identifiedDays && dayStructure.identifiedDays.length > 0) {
+    dayStructure.identifiedDays.forEach(day => {
+      schedule.push({
+        day: this.capitalizeFirst(day),
+        time: '08:00', // default
+        duration: '90min', // default
+        focus: `${day} training session`
+      });
+    });
+  }
+  
+  return schedule;
+}
+
+// Add missing helper methods
+isHeaderLine(line) {
+  return /^(week\s*\d+|session\s*\d+|day\s*\d+|training\s*week)/i.test(line.trim()) ||
+         line.length < 10 ||
+         /^[A-Z\s]{5,}$/.test(line.trim()); // All caps headers
+}
+
+capitalizeFirst(str) {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+}
+
+// Add methods for partial structure extraction
+extractFromBasicStructuredDocument(text, structureAnalysis, academyInfo) {
+  const sessions = [];
+  const { weekStructure } = structureAnalysis;
+  
+  // Create default week structure
+  const totalWeeks = weekStructure.totalWeeks || 8;
+  
+  for (let weekNum = 1; weekNum <= totalWeeks; weekNum++) {
+    const weekSession = {
+      id: `week_${weekNum}_basic_${Date.now()}`,
+      weekNumber: weekNum,
+      title: `Week ${weekNum} Training`,
+      description: `Training focus for week ${weekNum}`,
+      dailySessions: [],
+      totalDuration: 0,
+      focus: this.generateDefaultFocus(weekNum, academyInfo.sport),
+      academyName: academyInfo.academyName,
+      sport: academyInfo.sport,
+      weekSchedule: { days: ['monday', 'wednesday', 'friday'], pattern: 'Three days per week' }
+    };
+
+    // Create default sessions for this week
+    const dailySessions = this.generateDefaultWeekSessions(weekNum, academyInfo);
+    weekSession.dailySessions = dailySessions;
+    weekSession.totalDuration = dailySessions.reduce((sum, s) => sum + s.duration, 0);
+    
+    sessions.push(weekSession);
+  }
+  
+  return sessions;
+}
+
+extractFromUnstructuredDocument(text, structureAnalysis, academyInfo) {
+  const sessions = [];
+  
+  // Create minimal structure from unstructured text
+  const totalWeeks = 4; // Default to 4 weeks for unstructured
+  
+  for (let weekNum = 1; weekNum <= totalWeeks; weekNum++) {
+    const weekSession = {
+      id: `week_${weekNum}_unstructured_${Date.now()}`,
+      weekNumber: weekNum,
+      title: `Week ${weekNum} Training Program`,
+      description: `Training program derived from document content`,
+      dailySessions: [],
+      totalDuration: 270, // 3 sessions × 90 min
+      focus: this.generateDefaultFocus(weekNum, academyInfo.sport),
+      academyName: academyInfo.academyName,
+      sport: academyInfo.sport,
+      weekSchedule: { days: ['monday', 'wednesday', 'friday'], pattern: 'Standard 3-day week' }
+    };
+
+    // Create basic sessions
+    const dailySessions = [
+      this.createBasicSession(weekNum, 1, 'monday', academyInfo),
+      this.createBasicSession(weekNum, 2, 'wednesday', academyInfo),
+      this.createBasicSession(weekNum, 3, 'friday', academyInfo)
+    ];
+    
+    weekSession.dailySessions = dailySessions;
+    sessions.push(weekSession);
+  }
+  
+  return sessions;
+}
+
+generateDefaultFocus(weekNumber, sport) {
+  const sportFocus = {
+    soccer: ['ball control', 'passing', 'shooting', 'defending'],
+    basketball: ['dribbling', 'shooting', 'defense', 'teamwork'],
+    tennis: ['serves', 'groundstrokes', 'volleys', 'strategy'],
+    general: ['technique', 'fitness', 'tactics', 'teamwork']
+  };
+  
+  const focuses = sportFocus[sport] || sportFocus.general;
+  return [focuses[(weekNumber - 1) % focuses.length]];
+}
+
+generateDefaultWeekSessions(weekNumber, academyInfo) {
+  const days = ['monday', 'wednesday', 'friday'];
+  
+  return days.map((day, index) => 
+    this.createBasicSession(weekNumber, index + 1, day, academyInfo)
+  );
+}
+
+createBasicSession(weekNumber, dayNumber, dayName, academyInfo) {
+  return {
+    id: `session_${weekNumber}_${dayNumber}_basic_${Date.now()}`,
+    weekNumber: weekNumber,
+    dayNumber: dayNumber,
+    title: `${academyInfo.academyName} - Week ${weekNumber}, ${this.capitalizeFirst(dayName)} Training`,
+    day: dayName,
+    date: this.calculateSessionDate(weekNumber, dayName),
+    time: '08:00',
+    duration: 90,
+    location: academyInfo.location || 'Training Field',
+    type: 'Team Training',
+    participants: this.estimateParticipants(academyInfo.ageGroup),
+    status: 'scheduled',
+    academyName: academyInfo.academyName,
+    sport: academyInfo.sport,
+    ageGroup: academyInfo.ageGroup,
+    difficulty: academyInfo.difficulty,
+    activities: [`${this.capitalizeFirst(dayName)} training activities`],
+    drills: [`Basic ${academyInfo.sport} drills`],
+    objectives: [`Week ${weekNumber} skill development`],
+    equipment: this.getBasicEquipment(academyInfo.sport),
+    notes: `Standard ${dayName} training session`,
+    rawContent: `Week ${weekNumber} ${dayName} training`,
+    documentContent: `Training session for week ${weekNumber}`,
+    completionRate: 0,
+    focus: this.generateDefaultFocus(weekNumber, academyInfo.sport),
+    week: `Week ${weekNumber}`,
+    weekDescription: `Week ${weekNumber} training focus`
+  };
+}
+
+getBasicEquipment(sport) {
+  const equipmentMap = {
+    soccer: ['soccer balls', 'cones', 'goals', 'bibs'],
+    basketball: ['basketballs', 'hoops', 'cones'],
+    tennis: ['tennis balls', 'rackets', 'net'],
+    general: ['cones', 'markers', 'equipment']
+  };
+  
+  return equipmentMap[sport] || equipmentMap.general;
+}
+
+// Add methods called by other extraction functions
+extractSessionsForSpecificWeek(text, weekNumber, academyInfo) {
+  const weekPattern = new RegExp(`week\\s*${weekNumber}[\\s\\S]*?(?=week\\s*${weekNumber + 1}|$)`, 'gi');
+  const weekMatch = text.match(weekPattern);
+  
+  if (!weekMatch) {
+    return this.generateDefaultWeekSessions(weekNumber, academyInfo);
+  }
+  
+  const weekContent = weekMatch[0];
+  const dayPatterns = /(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/gi;
+  const days = [];
+  
+  let match;
+  while ((match = dayPatterns.exec(weekContent)) !== null) {
+    days.push(match[1].toLowerCase());
+  }
+  
+  if (days.length === 0) {
+    return this.generateDefaultWeekSessions(weekNumber, academyInfo);
+  }
+  
+  return days.map((day, index) => 
+    this.createBasicSession(weekNumber, index + 1, day, academyInfo)
+  );
+}
+
+extractWeekFocusByNumber(text, weekNumber) {
+  const weekPattern = new RegExp(`week\\s*${weekNumber}[\\s\\S]*?(?=week\\s*${weekNumber + 1}|$)`, 'gi');
+  const weekMatch = text.match(weekPattern);
+  
+  if (!weekMatch) {
+    return ['general training'];
+  }
+  
+  return this.extractWeekFocus(weekMatch[0]);
+}
+
+deriveWeekFocusFromSessions(sessions) {
+  const allFocus = sessions.flatMap(session => session.focus || []);
+  const uniqueFocus = [...new Set(allFocus)];
+  return uniqueFocus.slice(0, 3);
+}
+
+// Add methods for section extraction
+extractActivitiesFromSection(content, dayInfo) {
+  const startPos = Math.max(0, dayInfo.position - 50);
+  const endPos = Math.min(content.length, dayInfo.position + 200);
+  const section = content.substring(startPos, endPos);
+  
+  const lines = section.split('\n').map(line => line.trim()).filter(line => line.length > 5);
+  const activities = lines.filter(line => this.isActivity(line)).slice(0, 3);
+  
+  return activities.length > 0 ? activities : [`${dayInfo.day} training activities`];
+}
+
+extractDrillsFromSection(content, dayInfo) {
+  const startPos = Math.max(0, dayInfo.position - 50);
+  const endPos = Math.min(content.length, dayInfo.position + 200);
+  const section = content.substring(startPos, endPos);
+  
+  const lines = section.split('\n').map(line => line.trim()).filter(line => line.length > 5);
+  const drills = lines.filter(line => this.isDrill(line)).slice(0, 3);
+  
+  return drills.length > 0 ? drills.map(drill => ({ name: drill, description: drill })) : [{ name: 'Basic drills', description: 'Fundamental skill development' }];
+}
+
+extractObjectivesFromSection(content, dayInfo) {
+  const startPos = Math.max(0, dayInfo.position - 50);
+  const endPos = Math.min(content.length, dayInfo.position + 200);
+  const section = content.substring(startPos, endPos);
+  
+  const lines = section.split('\n').map(line => line.trim()).filter(line => line.length > 5);
+  const objectives = lines.filter(line => this.isObjective(line)).slice(0, 2);
+  
+  return objectives.length > 0 ? objectives : [`${dayInfo.day} training objectives`];
+}
+
+extractEquipmentFromSection(content, dayInfo) {
+  const equipmentKeywords = ['ball', 'cone', 'goal', 'bib', 'ladder', 'hurdle', 'marker', 'net', 'racket'];
+  const startPos = Math.max(0, dayInfo.position - 100);
+  const endPos = Math.min(content.length, dayInfo.position + 200);
+  const section = content.substring(startPos, endPos).toLowerCase();
+  
+  const foundEquipment = equipmentKeywords.filter(equipment => section.includes(equipment));
+  return foundEquipment.length > 0 ? foundEquipment : ['basic training equipment'];
+}
+
+extractNotesFromSection(content, dayInfo) {
+  const startPos = Math.max(0, dayInfo.position - 30);
+  const endPos = Math.min(content.length, dayInfo.position + 150);
+  const section = content.substring(startPos, endPos);
+  
+  const lines = section.split('\n').map(line => line.trim()).filter(line => line.length > 10);
+  const notes = lines.filter(line => this.isNote(line)).slice(0, 2);
+  
+  return notes.length > 0 ? notes.join('\n') : `Training notes for ${dayInfo.day}`;
+}
+
+extractSessionFocus(content, dayInfo) {
+  const startPos = Math.max(0, dayInfo.position - 100);
+  const endPos = Math.min(content.length, dayInfo.position + 200);
+  const section = content.substring(startPos, endPos);
+  
+  return this.extractWeekFocus(section);
 }
 
 parseDocumentStructure(text) {
@@ -231,36 +1011,47 @@ extractDuration(line) {
   return null;
 }
 
-  extractAcademyInfo(text, trainingPlan) {
-    const lines = text.split('\n').slice(0, 20); // Check first 20 lines
-    
-    let academyName = '';
-    let sport = '';
-    let ageGroup = '';
-    let program = '';
+// Update the extractAcademyInfo method in SessionExtractor.js
+extractAcademyInfo(text, trainingPlan, structureAnalysis = null) {
+  const lines = text.split('\n').slice(0, 20); // Check first 20 lines
+  
+  let academyName = '';
+  let sport = '';
+  let ageGroup = '';
+  let program = '';
 
-    // Extract academy name
-    for (const line of lines) {
-      const academyMatch = line.match(this.sessionPatterns.academyPattern);
-      if (academyMatch) {
-        academyName = academyMatch[1].trim();
-        break;
-      }
+  // Extract academy name with structure context
+  for (const line of lines) {
+    const academyMatch = line.match(this.sessionPatterns.academyPattern);
+    if (academyMatch) {
+      academyName = academyMatch[1].trim();
+      break;
     }
+  }
 
-    // Extract sport
-    const sportMatch = text.match(this.sessionPatterns.sportPattern);
-    if (sportMatch) {
-      sport = sportMatch[1].toLowerCase();
+  // Use structure analysis if available
+  if (structureAnalysis) {
+    if (structureAnalysis.documentType === 'curriculum') {
+      program = 'Training Curriculum';
+    } else if (structureAnalysis.documentType === 'weekly_schedule') {
+      program = 'Weekly Training Schedule';
     }
+  }
 
-    // Extract age group
-    const ageMatch = text.match(this.sessionPatterns.agePattern);
-    if (ageMatch) {
-      ageGroup = ageMatch[1];
-    }
+  // Extract sport
+  const sportMatch = text.match(this.sessionPatterns.sportPattern);
+  if (sportMatch) {
+    sport = sportMatch[1].toLowerCase();
+  }
 
-    // Extract program name
+  // Extract age group
+  const ageMatch = text.match(this.sessionPatterns.agePattern);
+  if (ageMatch) {
+    ageGroup = ageMatch[1];
+  }
+
+  // Extract program name
+  if (!program) {
     const programLines = lines.filter(line => 
       line.includes('COACHING') || 
       line.includes('PLAN') || 
@@ -269,16 +1060,17 @@ extractDuration(line) {
     if (programLines.length > 0) {
       program = programLines[0].trim();
     }
-
-    return {
-      academyName: academyName || trainingPlan.academyName || trainingPlan.title || 'Training Academy',
-      sport: sport || trainingPlan.category || 'soccer',
-      ageGroup: ageGroup || 'Youth',
-      program: program || trainingPlan.title || 'Training Program',
-      location: 'Training Facility', // Default value
-      difficulty: trainingPlan.difficulty || 'intermediate'
-    };
   }
+
+  return {
+    academyName: academyName || trainingPlan.academyName || trainingPlan.title || 'Training Academy',
+    sport: sport || trainingPlan.category || 'soccer',
+    ageGroup: ageGroup || 'Youth',
+    program: program || trainingPlan.title || 'Training Program',
+    location: 'Training Facility', // Default value
+    difficulty: trainingPlan.difficulty || 'intermediate'
+  };
+}
 
 extractWeeklySessions(text, structure, academyInfo) {
   const sessions = [];
