@@ -310,7 +310,7 @@ const AISettingsScreen = ({ navigation }) => {
 
   const testHuggingFaceWithAvailableModel = async () => {
     try {
-      const testModel = 'gpt2';
+      const testModel = 'microsoft/DialoGPT-small';
       const result = await AIService.testConnection(testModel, apiKey);
       return {
         success: true,
