@@ -26,14 +26,33 @@ class AIService {
     };
     
     // UPDATED: Better model selection for HuggingFace
+    // Replace your models object in the AIService constructor with this improved version:
+
+// Emergency fix: Replace your models object in AIService.js with these models that might still work
+
     this.models = {
-        textGeneration: 'gpt2',
-        conversation: 'microsoft/DialoGPT-small',
-        summarization: 'facebook/bart-large-cnn',
-        questionAnswering: 'deepset/roberta-base-squad2',
-        sentiment: 'distilbert-base-uncased-finetuned-sst-2-english',
-        embedding: 'sentence-transformers/all-MiniLM-L6-v2'
-      };
+      // Try smaller, more reliable models
+      textGeneration: 'distilgpt2',
+      conversation: 'microsoft/DialoGPT-medium', 
+      
+      // Backup options that often have providers available
+      textGenerationBackup: 'gpt2-medium',
+      conversationBackup: 'facebook/blenderbot_small-90M',
+      
+      // These typically still work during outages
+      sentiment: 'distilbert-base-uncased-finetuned-sst-2-english',
+      questionAnswering: 'distilbert-base-cased-distilled-squad',
+      summarization: 'sshleifer/distilbart-cnn-12-6',
+      embedding: 'sentence-transformers/all-MiniLM-L6-v2',
+      
+      // Very lightweight alternatives
+      lightweightText: 'facebook/opt-125m',
+      tinyModel: 'EleutherAI/gpt-neo-125M'
+
+      // AVOID: These often have inference provider issues
+      // gpt2: 'gpt2', // Remove this - has provider issues
+      // flan: 'google/flan-t5-base' // Also problematic
+    };
     
     this.sportsKnowledge = {
       soccer: {
@@ -182,34 +201,105 @@ async initializeTensorFlowService() {
   }
 
   // NEW: Validate HuggingFace with reliable models
+// Replace your validateHuggingFaceConnection method with this improved version:
 async validateHuggingFaceConnection() {
   try {
     console.log('AIService: Validating HuggingFace as secondary AI service...');
     
-    // Test with gpt2 which is more reliable than flan-t5-base
+    // Check if it's a widespread infrastructure issue
+    let allModelsFailedWithNoProvider = true;
+    let providerAvailable = false;
+    
+    // Try primary model first
+    const primaryModel = this.models.textGeneration;
+    let response = await this.testModelConnection(primaryModel);
+    
+    if (response.success) {
+      this.usageStats.successfulRequests++;
+      await this.saveSettings();
+      console.log(`AIService: HuggingFace validated with ${primaryModel}`);
+      return true;
+    } else if (!response.error?.includes('No Inference Provider')) {
+      allModelsFailedWithNoProvider = false;
+    }
+    
+    console.log(`AIService: Primary model ${primaryModel} failed, trying backup...`);
+    
+    // Try backup models
+    const modelsToTry = [
+      'distilgpt2',
+      'facebook/blenderbot_small-90M', 
+      'distilbert-base-uncased-finetuned-sst-2-english',
+      'sshleifer/distilbart-cnn-12-6'
+    ];
+    
+    for (const model of modelsToTry) {
+      response = await this.testModelConnection(model);
+      
+      if (response.success) {
+        // Update to use working model
+        this.models.textGeneration = model;
+        this.usageStats.successfulRequests++;
+        await this.saveSettings();
+        console.log(`AIService: HuggingFace validated with working model: ${model}`);
+        return true;
+      } else if (!response.error?.includes('No Inference Provider')) {
+        allModelsFailedWithNoProvider = false;
+      }
+    }
+    
+    // If all models failed due to no providers, it's infrastructure issue
+    if (allModelsFailedWithNoProvider) {
+      console.log('AIService: HuggingFace infrastructure issue detected - no providers available');
+      console.log('AIService: This is temporary and will resolve when HF infrastructure recovers');
+      
+      // Still mark as "available" but with infrastructure warning
+      this.serviceStatus.huggingface = {
+        available: false,
+        initialized: true,
+        hasApiKey: true,
+        infrastructureIssue: true,
+        status: 'provider_outage',
+        message: 'HuggingFace inference providers temporarily unavailable'
+      };
+      
+      return false; // But continue with TensorFlow
+    }
+    
+    console.warn('AIService: All HuggingFace models failed validation');
+    return false;
+    
+  } catch (error) {
+    console.warn('AIService: HuggingFace validation failed:', error.message);
+    this.handleAPIError(error);
+    return false;
+  }
+}
+
+// Add this helper method:
+async testModelConnection(modelName) {
+  try {
     const response = await this.hfInference.textGeneration({
-      model: this.models.textGeneration,
-      inputs: 'Test',
+      model: modelName,
+      inputs: 'Hello',
       parameters: {
-        max_length: 10,
+        max_length: 15,
         temperature: 0.1,
         do_sample: false
       }
     });
     
     if (response && (response.generated_text !== undefined || response[0]?.generated_text !== undefined)) {
-      this.usageStats.successfulRequests++;
-      await this.saveSettings();
-      console.log('AIService: HuggingFace validated as secondary service');
-      return true;
+      return { 
+        success: true, 
+        model: modelName, 
+        response: response.generated_text || response[0]?.generated_text 
+      };
     }
     
-    console.warn('AIService: HuggingFace validation failed - no valid response');
-    return false;
+    return { success: false, error: 'No valid response from model' };
   } catch (error) {
-    console.warn('AIService: HuggingFace validation failed:', error.message);
-    this.handleAPIError(error);
-    return false;
+    return { success: false, error: error.message };
   }
 }
 
@@ -524,15 +614,17 @@ async clearApiKey() {
 }
 
 // Add this new method to AIService.js
+// Replace your testHuggingFaceKey method in AIService.js with this improved version:
 async testHuggingFaceKey(apiKey) {
   try {
     console.log('AIService: Testing Hugging Face API key...');
     
-    // Try multiple endpoints to find one that works
+    // Try models with better inference availability
     const testEndpoints = [
+      'https://api-inference.huggingface.co/models/microsoft/DialoGPT-small',
       'https://api-inference.huggingface.co/models/distilbert-base-uncased-finetuned-sst-2-english',
-      'https://api-inference.huggingface.co/models/gpt2',
-      'https://api-inference.huggingface.co/models/microsoft/DialoGPT-small'
+      'https://api-inference.huggingface.co/models/distilgpt2',
+      'https://api-inference.huggingface.co/models/facebook/blenderbot-400M-distill'
     ];
     
     for (const endpoint of testEndpoints) {
@@ -544,7 +636,12 @@ async testHuggingFaceKey(apiKey) {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            inputs: "Hello world"
+            inputs: "Hello, how are you?",
+            parameters: {
+              max_length: 20,
+              temperature: 0.7,
+              do_sample: true
+            }
           })
         });
 
@@ -592,7 +689,8 @@ async testHuggingFaceKey(apiKey) {
               success: true, 
               message: 'API key validated successfully',
               testResult: firstResult,
-              endpoint: endpoint
+              endpoint: endpoint,
+              workingModel: endpoint.split('/').pop()
             };
           }
         }
@@ -602,7 +700,8 @@ async testHuggingFaceKey(apiKey) {
             success: true, 
             message: 'API key validated successfully',
             testResult: data,
-            endpoint: endpoint
+            endpoint: endpoint,
+            workingModel: endpoint.split('/').pop()
           };
         }
 
@@ -641,7 +740,14 @@ getApiStatus() {
     servicePriority: this.servicePriority,
     servicesAvailable: servicesAvailable,
     aiCapability: servicesAvailable > 1 ? 'enhanced' : servicesAvailable === 1 ? 'basic' : 'minimal',
-    offlineCapable: this.serviceStatus.tensorflow?.available || this.serviceStatus.ruleBased?.available
+    offlineCapable: this.serviceStatus.tensorflow?.available || this.serviceStatus.ruleBased?.available,
+    
+    // NEW: Infrastructure status info
+    infrastructureStatus: {
+      huggingfaceOutage: this.serviceStatus.huggingface?.infrastructureIssue || false,
+      tensorflowHealthy: this.serviceStatus.tensorflow?.available || false,
+      fallbackAvailable: this.serviceStatus.ruleBased?.available || false
+    }
   };
 }
 
@@ -683,7 +789,176 @@ getApiStatus() {
     return capabilities;
   }
 
+// Add this method to AIService.js
+async enhanceExtractedSessions(sessions, context) {
+  try {
+    console.log('AIService: Enhancing sessions with structure awareness');
+    
+    if (!this.isOnline && !this.tensorflowAvailable) {
+      console.log('AIService: Using rule-based enhancement with structure awareness');
+      return this.enhanceSessionsWithStructureRules(sessions, context);
+    }
 
+    // Try TensorFlow first, then HuggingFace, then rules
+    if (this.tensorflowAvailable) {
+      return await this.enhanceSessionsWithTensorFlow(sessions, context);
+    } else if (this.isOnline) {
+      return await this.enhanceSessionsWithHuggingFace(sessions, context);
+    } else {
+      return this.enhanceSessionsWithStructureRules(sessions, context);
+    }
+    
+  } catch (error) {
+    console.error('AIService: Session enhancement failed, using rules:', error);
+    return this.enhanceSessionsWithStructureRules(sessions, context);
+  }
+}
+
+// NEW: Structure-aware rule-based enhancement
+enhanceSessionsWithStructureRules(sessions, context) {
+  const { structureContext } = context;
+  
+  return sessions.map(weekSession => {
+    const enhancedWeek = { ...weekSession };
+    
+    // Enhance based on structure analysis
+    if (structureContext) {
+      enhancedWeek.structureScore = structureContext.organizationLevel.score;
+      enhancedWeek.confidenceLevel = this.calculateConfidenceFromStructure(structureContext);
+      
+      // Adjust session details based on structure insights
+      enhancedWeek.dailySessions = weekSession.dailySessions.map(session => 
+        this.enhanceSessionWithStructureInsights(session, structureContext, context)
+      );
+    }
+    
+    return enhancedWeek;
+  });
+}
+
+enhanceSessionWithStructureInsights(session, structureContext, context) {
+  const enhanced = { ...session };
+  
+  // Duration enhancement based on document analysis
+  if (structureContext.durationAnalysis.hasDurationInfo) {
+    const avgDuration = structureContext.durationAnalysis.averageDuration;
+    if (avgDuration && Math.abs(session.duration - avgDuration) > 30) {
+      enhanced.duration = avgDuration;
+      enhanced.durationAdjusted = true;
+      enhanced.originalDuration = session.duration;
+    }
+  }
+  
+  // Focus enhancement based on sport and structure
+  if (structureContext.organizationLevel.level === 'highly_structured') {
+    enhanced.confidence = 'high';
+    enhanced.structureQuality = 'excellent';
+  } else {
+    enhanced.confidence = 'moderate';
+    enhanced.structureQuality = 'basic';
+  }
+  
+  // Add structure-derived recommendations
+  enhanced.recommendations = this.generateStructureBasedRecommendations(
+    session, 
+    structureContext, 
+    context
+  );
+  
+  return enhanced;
+}
+
+generateStructureBasedRecommendations(session, structureContext, context) {
+  const recommendations = [];
+  
+  // Recommendations based on organization level
+  switch (structureContext.organizationLevel.level) {
+    case 'highly_structured':
+      recommendations.push('Well-organized session - follow document structure closely');
+      break;
+    case 'moderately_structured':
+      recommendations.push('Good structure - consider adding warm-up/cool-down if missing');
+      break;
+    case 'basic_structure':
+      recommendations.push('Basic structure - enhance with progressive difficulty');
+      break;
+    default:
+      recommendations.push('Limited structure - follow sport-specific training principles');
+  }
+  
+  // Duration-based recommendations
+  if (structureContext.durationAnalysis.hasDurationInfo) {
+    if (session.duration > 120) {
+      recommendations.push('Long session - ensure adequate rest periods');
+    } else if (session.duration < 45) {
+      recommendations.push('Short session - focus on high-intensity activities');
+    }
+  }
+  
+  // Day-specific recommendations
+  if (structureContext.dayStructure.hasSpecificDays) {
+    recommendations.push('Document specifies training days - maintain consistent schedule');
+  }
+  
+  return recommendations;
+}
+
+calculateConfidenceFromStructure(structureContext) {
+  const { organizationLevel } = structureContext;
+  
+  switch (organizationLevel.level) {
+    case 'highly_structured': return 0.95;
+    case 'moderately_structured': return 0.80;
+    case 'basic_structure': return 0.65;
+    default: return 0.50;
+  }
+}
+
+// NEW: Structure-aware document analysis enhancement
+async enhanceDocumentStructureAnalysis(structureAnalysis, text) {
+  try {
+    console.log('AIService: Enhancing structure analysis with AI');
+    
+    if (this.tensorflowAvailable) {
+      return await this.enhanceStructureWithTensorFlow(structureAnalysis, text);
+    } else if (this.isOnline) {
+      return await this.enhanceStructureWithHuggingFace(structureAnalysis, text);
+    } else {
+      return this.enhanceStructureWithRules(structureAnalysis, text);
+    }
+    
+  } catch (error) {
+    console.warn('AI structure enhancement failed:', error);
+    return this.enhanceStructureWithRules(structureAnalysis, text);
+  }
+}
+
+enhanceStructureWithRules(structureAnalysis, text) {
+  const insights = [];
+  
+  // Analyze document completeness
+  if (structureAnalysis.weekStructure.totalWeeks >= 12) {
+    insights.push('Comprehensive training program with full seasonal planning');
+  } else if (structureAnalysis.weekStructure.totalWeeks >= 4) {
+    insights.push('Solid training block suitable for skill development phase');
+  } else {
+    insights.push('Short-term training plan - good for intensive skill focus');
+  }
+  
+  // Analyze session distribution
+  if (structureAnalysis.sessionStructure.hasStructuredSessions) {
+    insights.push('Well-structured sessions with clear progression');
+  }
+  
+  // Analyze day patterns
+  if (structureAnalysis.dayStructure.weeklyPattern === 'weekdays_only') {
+    insights.push('School-friendly schedule focusing on weekday training');
+  } else if (structureAnalysis.dayStructure.weeklyPattern === 'full_week') {
+    insights.push('Intensive training schedule including weekends');
+  }
+  
+  return { insights };
+}
 
   // Add this method to your AIService class (in AIService.js)
 
