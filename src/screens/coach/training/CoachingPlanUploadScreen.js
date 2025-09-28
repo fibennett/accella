@@ -163,106 +163,111 @@ const loadDocuments = async () => {
   }
 };
 
-  const handleDocumentUpload = async () => {
-    try {
-      setUploading(true);
-      setUploadProgress(0.1);
-      setUploadStatus('Opening file selector...');
-      setIntegrityResult(null);
+// In CoachingPlanUploadScreen.js, update the handleDocumentUpload method
+const handleDocumentUpload = async () => {
+  try {
+    setUploading(true);
+    setUploadProgress(0.1);
+    setUploadStatus('Opening file selector...');
+    setIntegrityResult(null);
 
-      console.log('Starting document upload process...');
+    console.log('Starting enhanced document upload process...');
 
-      // Step 1: Select document
-      const file = await DocumentProcessor.selectDocument();
-      console.log('File selection result:', file ? 'File selected' : 'No file selected');
-      
-      if (!file) {
-        setUploading(false);
-        setUploadStatus('Selection cancelled');
-        return;
-      }
-
-      console.log('Selected file details:', {
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        hasFile: !!file.file
-      });
-
-      setUploadProgress(0.3);
-      setUploadStatus('Validating file format...');
-
-      // Step 2: Validate file before storage
-      const validation = DocumentProcessor.validateFileForPlatform(file);
-      console.log('File validation result:', validation);
-      
-      if (!validation.isValid) {
-        console.error('File validation failed:', validation.errors);
-        showValidationError(validation);
-        setUploading(false);
-        return;
-      }
-
-      setUploadProgress(0.5);
-      setUploadStatus('Storing file and checking integrity...');
-
-      console.log('About to store document with integrity check...');
-
-      // Step 3: Store with integrity check
-      const result = await DocumentProcessor.storeDocumentWithIntegrityCheck(file);
-      console.log('Storage completed, refreshing document list...');
-      console.log('Storage result:', {
-        hasDocument: !!result.document,
-        documentId: result.document?.id,
-        hasIntegrityResult: !!result.integrityResult
-      });
-
-      await loadDocuments();
-      
-      setIntegrityResult(result.integrityResult);
-
-      setUploadProgress(0.9);
-      setUploadStatus('Integrity verification complete');
-
-      console.log('About to navigate to processing with preview...');
-
-        // Generate academy preview
-        let academyPreview = null;
-        try {
-          academyPreview = await DocumentProcessor.previewAcademyInfo(result.document);
-        } catch (error) {
-          console.warn('Could not generate academy preview:', error);
-        }
-
-        // Step 4: Navigate to processing with preview
-        navigation.navigate('PlanProcessing', {
-          documentId: result.document.id,
-          academyPreview: academyPreview,
-          onComplete: (trainingPlan) => {
-            navigation.navigate('TrainingPlanLibrary', {
-              newPlanId: trainingPlan?.id,
-              showSuccess: true,
-              message: `"${academyPreview?.academyName || trainingPlan?.title || 'Training Plan'}" created successfully with AI enhancement!`
-            });
-          }
-        });
-
-    } catch (error) {
-      console.error('Upload failed with error:', error);
-      console.error('Error details:', {
-        message: error.message,
-        stack: error.stack,
-        suggestions: error.suggestions
-      });
-      
-      const platformError = PlatformUtils.handlePlatformError(error, 'Document Upload');
-      showUploadError(platformError);
-    } finally {
+    // Step 1: Select document
+    const file = await DocumentProcessor.selectDocument();
+    console.log('File selection result:', file ? 'File selected' : 'No file selected');
+    
+    if (!file) {
       setUploading(false);
-      setUploadProgress(0);
-      setUploadStatus('');
+      setUploadStatus('Selection cancelled');
+      return;
     }
-  };
+
+    setUploadProgress(0.3);
+    setUploadStatus('Analyzing document structure...');
+
+    // Step 2: Validate file before storage
+    const validation = DocumentProcessor.validateFileForPlatform(file);
+    console.log('File validation result:', validation);
+    
+    if (!validation.isValid) {
+      console.error('File validation failed:', validation.errors);
+      showValidationError(validation);
+      setUploading(false);
+      return;
+    }
+
+    setUploadProgress(0.5);
+    setUploadStatus('Storing file and analyzing structure...');
+
+    console.log('About to store document with enhanced analysis...');
+
+    // Step 3: Store with integrity check
+    const result = await DocumentProcessor.storeDocumentWithIntegrityCheck(file);
+    console.log('Storage completed, analyzing document structure...');
+
+    setUploadProgress(0.7);
+    setUploadStatus('Performing deep structure analysis...');
+
+    // NEW Step 4: Analyze document structure immediately
+    let structureAnalysis = null;
+    try {
+      const extractionResult = await DocumentProcessor.extractDocumentText(result.document);
+      structureAnalysis = await DocumentProcessor.analyzeDocumentStructure(extractionResult.text, result.document);
+      console.log('Document structure analysis completed:', structureAnalysis);
+    } catch (error) {
+      console.warn('Structure analysis failed:', error);
+    }
+
+    await loadDocuments();
+    setIntegrityResult(result.integrityResult);
+
+    setUploadProgress(0.9);
+    setUploadStatus('Structure analysis complete');
+
+    console.log('About to navigate to processing with structure insights...');
+
+    // Generate enhanced academy preview with structure insights
+    let academyPreview = null;
+    try {
+      academyPreview = await DocumentProcessor.previewAcademyInfo(result.document);
+      if (structureAnalysis) {
+        academyPreview.structureInsights = {
+          organizationLevel: structureAnalysis.organizationLevel.level,
+          totalWeeks: structureAnalysis.weekStructure.totalWeeks,
+          totalDays: structureAnalysis.dayStructure.totalDays,
+          hasDurations: structureAnalysis.durationAnalysis.hasDurationInfo,
+          confidence: structureAnalysis.confidence
+        };
+      }
+    } catch (error) {
+      console.warn('Could not generate enhanced academy preview:', error);
+    }
+
+    // Step 5: Navigate to processing with structure insights
+    navigation.navigate('PlanProcessing', {
+      documentId: result.document.id,
+      academyPreview: academyPreview,
+      structureAnalysis: structureAnalysis, // NEW: Pass structure analysis
+      onComplete: (trainingPlan) => {
+        navigation.navigate('TrainingPlanLibrary', {
+          newPlanId: trainingPlan?.id,
+          showSuccess: true,
+          message: `"${academyPreview?.academyName || trainingPlan?.title || 'Training Plan'}" created successfully with enhanced AI analysis!`
+        });
+      }
+    });
+
+  } catch (error) {
+    console.error('Enhanced upload failed with error:', error);
+    const platformError = PlatformUtils.handlePlatformError(error, 'Enhanced Document Upload');
+    showUploadError(platformError);
+  } finally {
+    setUploading(false);
+    setUploadProgress(0);
+    setUploadStatus('');
+  }
+};
 
   const showValidationError = (validation) => {
     Alert.alert(
